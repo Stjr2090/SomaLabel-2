@@ -25,7 +25,7 @@ export const SUNBIRD_API_URL = getEnvVar('SUNBIRD_API_URL', 'https://api.sunbird
 export const APP_CONFIG = {
   appName: 'SomaLabel',
   tagline: 'Snap a medicine label. Understand it in English or Luganda.',
-  maxImageDimension: 1600,
+  maxImageDimension: 1024,
   disclaimer: 'This explains what is printed on the label. Confirm with a pharmacist or health worker before use.',
   unreadableNotice: "We couldn't read this label clearly. Try again in good light, with the label flat and close up.",
 };
