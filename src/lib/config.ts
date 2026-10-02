@@ -17,11 +17,6 @@ function getEnvVar(key: string, defaultValue: string = ''): string {
 
 export const MODEL_ID = getEnvVar('MODEL_ID', 'gemma-4-26b-a4b-it');
 
-export const GEMINI_API_KEY = getEnvVar('GEMINI_API_KEY', '');
-
-export const SUNBIRD_API_KEY = getEnvVar('SUNBIRD_API_KEY', '');
-export const SUNBIRD_API_URL = getEnvVar('SUNBIRD_API_URL', 'https://api.sunbird.ai/tasks/nllb_translate');
-
 export const APP_CONFIG = {
   appName: 'SomaLabel',
   tagline: 'Snap a medicine label. Understand it in English or Luganda.',

@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
-import { GEMINI_API_KEY, MODEL_ID } from './config.ts';
+import { MODEL_ID } from './config.ts';
+import { GEMINI_API_KEY } from './server-env.ts';
 import { ExtractedLabel } from './types.ts';
 
 const EXTRACTION_INSTRUCTIONS = `You are SomaLabel's medicine label extraction engine.

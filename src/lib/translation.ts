@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
-import { GEMINI_API_KEY, MODEL_ID, SUNBIRD_API_KEY, SUNBIRD_API_URL } from './config.ts';
+import { MODEL_ID } from './config.ts';
+import { GEMINI_API_KEY, SUNBIRD_API_KEY, SUNBIRD_API_URL } from './server-env.ts';
 import { TranslationResult } from './types.ts';
 
 // In-memory cache for translations during the session
