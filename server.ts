@@ -62,7 +62,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
 });
 
 // Model health check: text-only "Reply with OK" against MODEL_ID
-app.get('/api/health/model', async (_req: Request, res: Response) => {
+app.get('/api/health/model', rateLimit, async (_req: Request, res: Response) => {
   const started = Date.now();
   try {
     const apiKey = process.env.GEMINI_API_KEY || '';
