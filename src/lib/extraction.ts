@@ -313,7 +313,6 @@ export async function extractMedicineLabel(
   const ai = new GoogleGenAI({
     apiKey: GEMINI_API_KEY,
     httpOptions: {
-      headers: { 'User-Agent': 'aistudio-build' },
       timeout: REQUEST_TIMEOUT_MS,
     },
   });
