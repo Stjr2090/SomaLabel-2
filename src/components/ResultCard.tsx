@@ -278,6 +278,9 @@ export const ResultCard: React.FC<ResultCardProps> = ({
         </p>
       </div>
 
+      {/* Small model attribution line */}
+      <p className="mt-3 text-center text-xs text-slate-400">Model: {result.modelUsed}</p>
+
       {/* Pinned Bottom Button: "Scan another label" (stays pinned to the bottom of the screen) */}
       <div className="fixed bottom-0 left-0 right-0 p-4 bg-white/95 backdrop-blur-sm border-t border-slate-200 z-20">
         <div className="w-full max-w-[390px] mx-auto">

@@ -2,6 +2,7 @@ import React from 'react';
 import { RotateCcw } from 'lucide-react';
 import { Language, TRANSLATIONS } from '../lib/translations.ts';
 import { DebugPanel } from './DebugPanel.tsx';
+import { isDebugMode } from '../lib/debug.ts';
 
 export type ErrorType = 'blurry' | 'not_medicine' | 'api_error' | 'connection' | 'gemma_rejection' | 'parse_error';
 
@@ -81,11 +82,13 @@ export const ErrorCard: React.FC<ErrorCardProps> = ({
         </button>
       </div>
 
-      {/* Collapsible Debug Panel showing raw API error and raw model text */}
-      <DebugPanel
-        rawApiError={rawApiError}
-        rawModelText={rawModelText}
-      />
+      {/* Collapsible Debug Panel showing raw API error and raw model text (debug mode only) */}
+      {isDebugMode() && (
+        <DebugPanel
+          rawApiError={rawApiError}
+          rawModelText={rawModelText}
+        />
+      )}
     </div>
   );
 };
