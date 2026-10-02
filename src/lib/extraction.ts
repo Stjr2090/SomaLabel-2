@@ -140,6 +140,22 @@ export const TEXT_REQUEST_TIMEOUT_MS = 30000;
 export const IMAGE_REQUEST_TIMEOUT_MS = 30000;
 export const MAX_LABEL_TEXT_LENGTH = 5000;
 export const MIN_TEXT_LENGTH = 15;
+export const TEXT_MAX_OUTPUT_TOKENS = 1024;
+export const MAX_ERROR_MESSAGE_LENGTH = 500;
+
+/**
+ * Returns a client-safe error string: the message only, never the stack
+ * or server file paths. The full error is logged server-side.
+ */
+export function errorMessage(err: unknown, context: string = 'extraction'): string {
+  if (err === null || err === undefined) return 'Unknown error.';
+  console.error(`[${context}] model error:`, err);
+  const message =
+    typeof err === 'object' && err !== null && 'message' in err
+      ? String((err as { message: unknown }).message)
+      : String(err);
+  return message.slice(0, MAX_ERROR_MESSAGE_LENGTH);
+}
 
 export const UNREADABLE_NOTICE =
   "We couldn't read this label clearly. Try again in good light, with the label flat and close up.";
@@ -174,25 +190,6 @@ export function isRetryableError(err: any): boolean {
   // Only treat as retryable when the message names one of the three codes.
   // Avoid matching bare substrings inside other numbers where possible.
   if (/(^|[^0-9])(429|500|503)([^0-9]|$)/.test(msg)) return true;
-  return false;
-}
-
-/**
- * Retry predicate for the text-only path: 429 or 503 only.
- * A 500 on the text path is not retried on the primary model;
- * the single alternate attempt still runs.
- */
-export function isRetryableTextError(err: any): boolean {
-  if (!err) return false;
-  const status = err.status ?? err.code ?? err.statusCode;
-  if (status === 429 || status === 503) return true;
-  if (typeof status === 'string') {
-    const n = Number(status);
-    if (n === 429 || n === 503) return true;
-  }
-
-  const msg = String(err.message || err).toLowerCase();
-  if (/(^|[^0-9])(429|503)([^0-9]|$)/.test(msg)) return true;
   return false;
 }
 
@@ -252,12 +249,13 @@ export type ModelTextCaller = (modelId: string) => Promise<string>;
 /**
  * Core retry orchestration. Worst case is 3 model calls:
  * primary attempt, one retry on retryable errors after RETRY_DELAY_MS,
- * then one alternate attempt.
+ * then one alternate attempt. Passing null as alternate skips the
+ * alternate attempt, capping the worst case at 2 calls.
  */
 export async function extractWithCaller(
   caller: ModelTextCaller,
   primary: string,
-  alternate: string,
+  alternate: string | null,
   sleep: (ms: number) => Promise<void> = delay,
   shouldRetry: (err: any) => boolean = isRetryableError
 ): Promise<ExtractionResult> {
@@ -307,19 +305,17 @@ export async function extractWithCaller(
   // but we still fall through to the alternate. If first attempt threw a
   // non-retryable error, we also fall through directly to the alternate.
 
-  // Attempt 3 (at most): alternate model, exactly once.
-  try {
-    const done = await tryOnce(alternate);
-    if (done) return done;
-  } catch (err: any) {
-    lastError = err;
+  // Attempt 3 (at most): alternate model, exactly once, when one is given.
+  if (alternate) {
+    try {
+      const done = await tryOnce(alternate);
+      if (done) return done;
+    } catch (err: any) {
+      lastError = err;
+    }
   }
 
-  const errorDetails = lastError
-    ? typeof lastError === 'object'
-      ? JSON.stringify(lastError, Object.getOwnPropertyNames(lastError))
-      : String(lastError)
-    : 'All model attempts failed.';
+  const errorDetails = lastError ? errorMessage(lastError) : 'All model attempts failed.';
 
   return {
     status: 'api_error',
@@ -376,6 +372,9 @@ async function callTextModel(
         parts: [{ text: userPrompt }],
       },
     ],
+    config: {
+      maxOutputTokens: TEXT_MAX_OUTPUT_TOKENS,
+    },
   });
 
   return { text: response.text || '' };
@@ -383,21 +382,20 @@ async function callTextModel(
 
 /**
  * Text-only extraction orchestration with an injectable caller.
- * Retries the primary model once on 429 or 503 only, then tries
- * the alternate model once. Worst case is 3 model calls.
+ * Single model: retries the primary model once on 429, 500 or 503
+ * after RETRY_DELAY_MS. No alternate model. Worst case is 2 model calls.
  */
 export async function extractTextWithCaller(
   caller: ModelTextCaller,
   primary: string,
-  alternate: string,
   sleep: (ms: number) => Promise<void> = delay
 ): Promise<ExtractionResult> {
-  return extractWithCaller(caller, primary, alternate, sleep, isRetryableTextError);
+  return extractWithCaller(caller, primary, null, sleep, isRetryableError);
 }
 
 /**
  * Primary path: structures OCR label text into JSON with Gemma.
- * Text-only request, 15-second per-call timeout.
+ * Text-only request on a single model, one retry on 429/500/503.
  */
 export async function extractFromText(labelText: string): Promise<ExtractionResult> {
   if (!GEMINI_API_KEY) {
@@ -410,7 +408,7 @@ export async function extractFromText(labelText: string): Promise<ExtractionResu
   }
 
   const ai = buildClient(TEXT_REQUEST_TIMEOUT_MS);
-  const [primaryGemma, alternateGemma] = getPrimaryAndAlternate();
+  const [primaryGemma] = getPrimaryAndAlternate();
 
   console.log(`[extractFromText] Attempting primary model: ${primaryGemma}`);
   const caller: ModelTextCaller = async (modelId: string) => {
@@ -418,7 +416,7 @@ export async function extractFromText(labelText: string): Promise<ExtractionResu
     return text;
   };
 
-  return extractTextWithCaller(caller, primaryGemma, alternateGemma);
+  return extractTextWithCaller(caller, primaryGemma);
 }
 
 /**
@@ -445,11 +443,7 @@ export async function extractImageWithCaller(
       };
     }
   } catch (err: any) {
-    const errorDetails =
-      typeof err === 'object'
-        ? JSON.stringify(err, Object.getOwnPropertyNames(err))
-        : String(err);
-    return unreadableResult(primary, errorDetails, lastRawText);
+    return unreadableResult(primary, errorMessage(err, 'extractFromImage'), lastRawText);
   }
   return unreadableResult(
     primary,

@@ -6,6 +6,29 @@ import { TranslationResult } from './types.ts';
 // In-memory cache for translations during the session
 const translationCache = new Map<string, TranslationResult>();
 
+export const SUNBIRD_TIMEOUT_MS = 15000;
+
+/**
+ * Reads the translated string from a Sunbird response.
+ * Current API (POST /tasks/translate): { output: { translated_text } }.
+ * Older flat shapes are still accepted.
+ */
+export function readSunbirdText(data: any): string | null {
+  if (!data || typeof data !== 'object') return null;
+  const output = data.output;
+  const candidates = [
+    output && typeof output === 'object' ? output.translated_text : undefined,
+    typeof output === 'string' ? output : undefined,
+    data.translated_text,
+    data.text,
+    data.translation,
+  ];
+  for (const value of candidates) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+}
+
 /**
  * High-quality medical translation fallback dictionary for common Ugandan medicine label phrasing
  */
@@ -46,7 +69,8 @@ function translateWithDictionary(englishText: string): string {
 
 /**
  * Translates English text to Luganda.
- * 1. If SUNBIRD_API_KEY and SUNBIRD_API_URL are set, calls Sunbird AI translation API.
+ * 1. If SUNBIRD_API_KEY and SUNBIRD_API_URL are set, calls Sunbird AI translation API
+ *    (POST /tasks/translate). Non-OK responses and unrecognised shapes are logged.
  * 2. Otherwise falls back to asking the Gemma 4 model for a simple Luganda translation.
  * 3. Includes fallback resilience with a "machine translation" note.
  */
@@ -79,24 +103,40 @@ export async function toLuganda(text: string): Promise<TranslationResult> {
           target_language: 'lug',
           text: trimmed,
         }),
+        signal: AbortSignal.timeout(SUNBIRD_TIMEOUT_MS),
       });
 
-      if (response.ok) {
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        console.warn(
+          `[toLuganda] Sunbird returned ${response.status}: ${body.slice(0, 200)}`
+        );
+      } else {
         const data = await response.json();
-        const lugandaText = data.output || data.translated_text || data.text || data.translation;
-        if (lugandaText && typeof lugandaText === 'string') {
+        const lugandaText = readSunbirdText(data);
+        if (lugandaText) {
           const result: TranslationResult = {
-            lugandaText: lugandaText.trim(),
+            lugandaText,
             source: 'sunbird',
             note: 'Translated via Sunbird AI (Sunbird AI translation engine for Ugandan languages)',
           };
           translationCache.set(trimmed, result);
           return result;
         }
+        const keys = data && typeof data === 'object' ? Object.keys(data).join(', ') : typeof data;
+        const outputKeys =
+          data && typeof data.output === 'object' && data.output !== null
+            ? Object.keys(data.output).join(', ')
+            : typeof data?.output;
+        console.warn(
+          `[toLuganda] Sunbird response shape not recognised. Keys: [${keys}]; output: [${outputKeys}]`
+        );
       }
     } catch (sunbirdErr) {
-      console.warn('Sunbird AI translation unavailable, falling back to Gemma 4:', sunbirdErr);
+      console.warn('[toLuganda] Sunbird request failed, falling back to Gemma 4:', sunbirdErr);
     }
+  } else {
+    console.warn('[toLuganda] Sunbird skipped: SUNBIRD_API_KEY or SUNBIRD_API_URL is not set.');
   }
 
   // 2. Fall back to asking Gemma 4 model (open-weight model specified in config)
@@ -105,7 +145,6 @@ export async function toLuganda(text: string): Promise<TranslationResult> {
       const ai = new GoogleGenAI({
         apiKey: GEMINI_API_KEY,
         httpOptions: {
-          headers: { 'User-Agent': 'aistudio-build' },
           timeout: 10000,
         },
       });
