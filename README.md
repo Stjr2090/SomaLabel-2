@@ -4,31 +4,31 @@ SomaLabel is a mobile-first web app that photographs a medicine label and explai
 
 ## Model
 
-Core AI work is done by the open-weight Gemma 4 26B A4B IT model (`gemma-4-26b-a4b-it`) via the Gemini API. Gemma is licensed under Apache 2.0. The configured alternate model is `gemma-4-31b-it`. No closed models are used; if both Gemma models fail, the scan returns an API error.
+Core AI work is done by the open-weight Gemma 4 26B A4B IT model (`gemma-4-26b-a4b-it`) via the Gemini API. Gemma is licensed under Apache 2.0. The configured alternate model is `gemma-4-31b-it`. No closed models are used; if both Gemma models fail, the scanner returns an API error.
 
 ## Dependencies and licenses
 
-| Dependency | License |
-| :--- | :--- |
-| @google/genai | Apache-2.0 |
-| @tailwindcss/vite | MIT |
-| @vitejs/plugin-react | MIT |
-| lucide-react | ISC |
-| react | MIT |
-| react-dom | MIT |
-| vite | MIT |
-| express | MIT |
-| dotenv | BSD-2-Clause |
-| motion | MIT |
-| autoprefixer (dev) | MIT |
-| esbuild (dev) | MIT |
-| tailwindcss (dev) | MIT |
-| tsx (dev) | MIT |
-| typescript (dev) | Apache-2.0 |
-| @types/node (dev) | MIT |
-| @types/react (dev) | MIT |
-| @types/react-dom (dev) | MIT |
-| @types/express (dev) | MIT |
+| Dependency             | License      |
+| :--------------------- | :----------- |
+| @google/genai          | Apache-2.0   |
+| @tailwindcss/vite      | MIT          |
+| @vitejs/plugin-react   | MIT          |
+| lucide-react           | ISC          |
+| react                  | MIT          |
+| react-dom              | MIT          |
+| vite                   | MIT          |
+| express                | MIT          |
+| dotenv                 | BSD-2-Clause |
+| motion                 | MIT          |
+| autoprefixer (dev)     | MIT          |
+| esbuild (dev)          | MIT          |
+| tailwindcss (dev)      | MIT          |
+| tsx (dev)              | MIT          |
+| typescript (dev)       | Apache-2.0   |
+| @types/node (dev)      | MIT          |
+| @types/react (dev)     | MIT          |
+| @types/react-dom (dev) | MIT          |
+| @types/express (dev)   | MIT          |
 
 ## Setup and run
 
@@ -64,13 +64,13 @@ npm run lint
 
 Copy `.env.example` to `.env`. Every variable from `.env.example`:
 
-| Variable | Description | Example |
-| :--- | :--- | :--- |
-| GEMINI_API_KEY | Required. API key for calling Gemma 4 models via the Gemini API. Read only on the server. | YOUR_GEMINI_API_KEY |
-| MODEL_ID | Primary open-weight model id. | gemma-4-26b-a4b-it |
-| SUNBIRD_API_KEY | Optional. Sunbird AI API key for Luganda translation. Read only on the server. | (empty) |
-| SUNBIRD_API_URL | Optional. Sunbird AI translation endpoint. | https://api.sunbird.ai/tasks/nllb_translate |
-| PORT | Server port. | 3000 |
+| Variable        | Description                                                                               | Example                                     |
+| :-------------- | :---------------------------------------------------------------------------------------- | :------------------------------------------ |
+| GEMINI_API_KEY  | Required. API key for calling Gemma 4 models via the Gemini API. Read only on the server. | YOUR_GEMINI_API_KEY                         |
+| MODEL_ID        | Primary open-weight model id.                                                             | gemma-4-26b-a4b-it                          |
+| SUNBIRD_API_KEY | Optional. Sunbird AI API key for Luganda translation. Read only on the server.            | (empty)                                     |
+| SUNBIRD_API_URL | Optional. Sunbird AI translation endpoint.                                                | https://api.sunbird.ai/tasks/nllb_translate |
+| PORT            | Server port.                                                                              | 3000                                        |
 
 `.env` is ignored by git and must never be committed.
 
