@@ -1,15 +1,17 @@
 {
-  "name": "react-example",
+  "name": "somalabel",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "SomaLabel explains medicine labels from a photo in English or Luganda.",
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build",
-    "start": "node server.ts",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server.js",
+    "start": "NODE_ENV=production node dist/server.js",
     "preview": "vite preview",
     "test": "tsx --test tests/**/*.test.ts",
-    "clean": "rm -rf dist server.js",
+    "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
