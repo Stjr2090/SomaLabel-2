@@ -1,0 +1,6 @@
+{
+  "name": "SomaLabel",
+  "description": "Mobile-first web app that helps ordinary people in Uganda understand medicine labels in English and Luganda using open-weight Gemma 4 instruction-tuned models.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

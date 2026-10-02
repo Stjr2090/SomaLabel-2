@@ -1,0 +1,154 @@
+import { GoogleGenAI } from '@google/genai';
+import { GEMINI_API_KEY, MODEL_ID, SUNBIRD_API_KEY, SUNBIRD_API_URL } from './config.ts';
+import { TranslationResult } from './types.ts';
+
+// In-memory cache for translations during the session
+const translationCache = new Map<string, TranslationResult>();
+
+/**
+ * High-quality medical translation fallback dictionary for common Ugandan medicine label phrasing
+ */
+const MEDICAL_PHRASE_MAPPINGS: Array<[RegExp, string]> = [
+  [/this medicine is/gi, 'Eddagala lino lye'],
+  [/take (\d+) tablet/gi, 'Mira empeke $1'],
+  [/take (\d+) capsule/gi, 'Mira kapuso $1'],
+  [/take two tablets/gi, 'Mira empeke bbiri'],
+  [/take one tablet/gi, 'Mira empeke emu'],
+  [/every (\d+) hours/gi, 'buli luvannyuma lwa ssaawa $1'],
+  [/with water/gi, 'n\'amazzi amayonjo'],
+  [/after food|after meals/gi, 'oluvannyuma lw\'okulya emmere'],
+  [/before food|before meals/gi, 'nga tonnalya mmere'],
+  [/for headache or fever/gi, 'ery\'omutwe oguluma oba omusujja'],
+  [/for pain/gi, 'ery\'obulumi'],
+  [/for malaria/gi, 'ery\'omusujja gw\'ensiri (malaria)'],
+  [/for bacterial infections/gi, 'ery\'obuwuka (infections)'],
+  [/do not take more than/gi, 'Tosukka kumira'],
+  [/do not exceed/gi, 'Tosukka kumira'],
+  [/keep out of reach of children/gi, 'Liteeke awalala abaana we batayinza kulituukako'],
+  [/store in a cool dry place/gi, 'Literekere mu kifo ekirunji ekitanywa kasana era ekitannyogoga nnyo'],
+  [/protect from light/gi, 'Likuumire awalala okuva ku musana omungi'],
+  [/shake well before use/gi, 'Liseenye bulungi nga tonnakozesa'],
+  [/finish the entire course/gi, 'Ggusaayo eddagala lyonna nga musawo bwe yakugambye'],
+  [/confirm with a pharmacist or health worker before use/gi, 'Sooka weebuuze ku musawo oba omutunzi w\'eddagala nga tonnalikozesa'],
+];
+
+/**
+ * Translates medicine instructions to Luganda using rule-based medical dictionary
+ */
+function translateWithDictionary(englishText: string): string {
+  let translated = englishText;
+  for (const [regex, replacement] of MEDICAL_PHRASE_MAPPINGS) {
+    translated = translated.replace(regex, replacement);
+  }
+  return translated;
+}
+
+/**
+ * Translates English text to Luganda.
+ * 1. If SUNBIRD_API_KEY and SUNBIRD_API_URL are set, calls Sunbird AI translation API.
+ * 2. Otherwise falls back to asking the Gemma 4 model for a simple Luganda translation.
+ * 3. Includes fallback resilience with a "machine translation" note.
+ */
+export async function toLuganda(text: string): Promise<TranslationResult> {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return {
+      lugandaText: '',
+      source: 'fallback',
+      note: 'No text provided for translation.',
+    };
+  }
+
+  // Check in-memory cache
+  if (translationCache.has(trimmed)) {
+    return translationCache.get(trimmed)!;
+  }
+
+  // 1. Try Sunbird AI API if configured
+  if (SUNBIRD_API_KEY && SUNBIRD_API_URL) {
+    try {
+      const response = await fetch(SUNBIRD_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${SUNBIRD_API_KEY}`,
+        },
+        body: JSON.stringify({
+          source_language: 'eng',
+          target_language: 'lug',
+          text: trimmed,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const lugandaText = data.output || data.translated_text || data.text || data.translation;
+        if (lugandaText && typeof lugandaText === 'string') {
+          const result: TranslationResult = {
+            lugandaText: lugandaText.trim(),
+            source: 'sunbird',
+            note: 'Translated via Sunbird AI (Sunbird AI translation engine for Ugandan languages)',
+          };
+          translationCache.set(trimmed, result);
+          return result;
+        }
+      }
+    } catch (sunbirdErr) {
+      console.warn('Sunbird AI translation unavailable, falling back to Gemma 4:', sunbirdErr);
+    }
+  }
+
+  // 2. Fall back to asking Gemma 4 model (open-weight model specified in config)
+  if (GEMINI_API_KEY) {
+    try {
+      const ai = new GoogleGenAI({
+        apiKey: GEMINI_API_KEY,
+        httpOptions: {
+          headers: { 'User-Agent': 'aistudio-build' },
+          timeout: 10000,
+        },
+      });
+
+      const prompt = `You are a medical translator for Uganda. Translate the following plain-language medicine explanation into simple, clear Luganda that an ordinary Ugandan can easily understand.
+Keep all brand names, numbers, milligram strengths, and times exact.
+Do not add any medical advice not present in the original text.
+Provide ONLY the translated Luganda text with no conversational preamble or markdown.
+
+Original English text:
+${trimmed}`;
+
+      const response = await ai.models.generateContent({
+        model: MODEL_ID,
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: prompt }],
+          },
+        ],
+      });
+
+      const translatedLuganda = response.text?.trim();
+      if (translatedLuganda && translatedLuganda.length > 5) {
+        const result: TranslationResult = {
+          lugandaText: translatedLuganda,
+          source: 'gemma',
+          note: 'Machine translation (Envvuunula ey\'ebyuma)',
+        };
+        translationCache.set(trimmed, result);
+        return result;
+      }
+    } catch (gemmaErr) {
+      console.warn('Gemma Luganda translation error:', gemmaErr);
+    }
+  }
+
+  // 3. Resilient medical phrase dictionary translation
+  const dictTranslated = translateWithDictionary(trimmed);
+  const result: TranslationResult = {
+    lugandaText: dictTranslated,
+    source: 'fallback',
+    note: 'Machine translation (Envvuunula ey\'ebyuma)',
+  };
+  translationCache.set(trimmed, result);
+  return result;
+}

@@ -1,0 +1,29 @@
+[
+  {
+    "registration_number": "NDA/MAL/HPD/0189",
+    "product_name": "Paracetamol 500mg Tablets (Kampala Pharma Demo Pack)",
+    "dosage_form": "Tablet",
+    "strength": "500mg",
+    "manufacturer": "Kampala Pharmaceutical Industries 1996 Ltd",
+    "status": "Registered",
+    "note": "PLACEHOLDER FOR DEMO PACK - Replace with official NDA register entry"
+  },
+  {
+    "registration_number": "NDA/MAL/HPD/0421",
+    "product_name": "Coartem 20/120mg Dispersible Tablets (QCIL Demo Pack)",
+    "dosage_form": "Dispersible Tablet",
+    "strength": "20mg Artemether / 120mg Lumefantrine",
+    "manufacturer": "Quality Chemical Industries Ltd (QCIL), Luzira Kampala",
+    "status": "Registered",
+    "note": "PLACEHOLDER FOR DEMO PACK - Replace with official NDA register entry"
+  },
+  {
+    "registration_number": "NDA/MED/2024/0912",
+    "product_name": "Amoxicillin 250mg Capsules (Abacus Demo Pack)",
+    "dosage_form": "Capsule",
+    "strength": "250mg",
+    "manufacturer": "Abacus Parenteral Drugs Ltd, Mukono Uganda",
+    "status": "Registered",
+    "note": "PLACEHOLDER FOR DEMO PACK - Replace with official NDA register entry"
+  }
+]
