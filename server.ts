@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
-import { extractLabel, normalizeLabelText } from './src/lib/extraction.ts';
+import { extractLabel, normalizeLabelText, errorMessage } from './src/lib/extraction.ts';
 import { analyzeExpiry } from './src/lib/expiry.ts';
 import { lookupRegistration, loadNDASeed } from './src/lib/registration.ts';
 import { toLuganda } from './src/lib/translation.ts';
@@ -90,10 +90,7 @@ app.get('/api/health/model', rateLimit, async (_req: Request, res: Response) => 
       rawError: null,
     });
   } catch (err: any) {
-    const rawError =
-      err && typeof err === 'object'
-        ? JSON.stringify(err, Object.getOwnPropertyNames(err)).slice(0, 2000)
-        : String(err).slice(0, 2000);
+    const rawError = errorMessage(err);
     res.status(502).json({
       ok: false,
       modelUsed: MODEL_ID,
@@ -239,7 +236,7 @@ app.post('/api/extract', rateLimit, async (req: Request, res: Response) => {
       success: false,
       status: 'api_error',
       error: error.message || 'Internal server error during medicine label extraction.',
-      rawApiError: typeof error === 'object' ? JSON.stringify(error, Object.getOwnPropertyNames(error)) : String(error),
+      rawApiError: errorMessage(error),
       rawModelText: null,
     });
   }

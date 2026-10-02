@@ -44,6 +44,33 @@ function translateWithDictionary(englishText: string): string {
   return translated;
 }
 
+const SUNBIRD_TRANSLATE_PATH = '/tasks/translate';
+
+/**
+ * Maps the retired /tasks/nllb_translate path to the current /tasks/translate endpoint.
+ */
+export function resolveSunbirdUrl(url: string): string {
+  return url.replace(/\/tasks\/nllb_translate\/?$/, SUNBIRD_TRANSLATE_PATH);
+}
+
+/**
+ * Reads the translated text from a Sunbird response.
+ * Current shape: { output: { translated_text } }. Flat string fields are also accepted.
+ */
+export function readSunbirdTranslation(data: any): string {
+  if (!data || typeof data !== 'object') return '';
+  const candidates = [
+    data.output?.translated_text,
+    typeof data.output === 'string' ? data.output : undefined,
+    data.translated_text,
+    data.translation,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim()) return c.trim();
+  }
+  return '';
+}
+
 /**
  * Translates English text to Luganda.
  * 1. If SUNBIRD_API_KEY and SUNBIRD_API_URL are set, calls Sunbird AI translation API.
@@ -67,8 +94,9 @@ export async function toLuganda(text: string): Promise<TranslationResult> {
 
   // 1. Try Sunbird AI API if configured
   if (SUNBIRD_API_KEY && SUNBIRD_API_URL) {
+    const sunbirdUrl = resolveSunbirdUrl(SUNBIRD_API_URL);
     try {
-      const response = await fetch(SUNBIRD_API_URL, {
+      const response = await fetch(sunbirdUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -81,21 +109,27 @@ export async function toLuganda(text: string): Promise<TranslationResult> {
         }),
       });
 
-      if (response.ok) {
+      if (!response.ok) {
+        console.warn(`[translate] Sunbird returned HTTP ${response.status} from ${sunbirdUrl}`);
+      } else {
         const data = await response.json();
-        const lugandaText = data.output || data.translated_text || data.text || data.translation;
-        if (lugandaText && typeof lugandaText === 'string') {
+        const lugandaText = readSunbirdTranslation(data);
+        if (lugandaText) {
           const result: TranslationResult = {
-            lugandaText: lugandaText.trim(),
+            lugandaText,
             source: 'sunbird',
             note: 'Translated via Sunbird AI (Sunbird AI translation engine for Ugandan languages)',
           };
           translationCache.set(trimmed, result);
           return result;
         }
+        console.warn(
+          '[translate] Sunbird response had no translated text. Keys:',
+          data && typeof data === 'object' ? Object.keys(data).join(',') : typeof data
+        );
       }
-    } catch (sunbirdErr) {
-      console.warn('Sunbird AI translation unavailable, falling back to Gemma 4:', sunbirdErr);
+    } catch (sunbirdErr: any) {
+      console.warn('[translate] Sunbird request failed:', sunbirdErr?.message || sunbirdErr);
     }
   }
 
@@ -105,7 +139,6 @@ export async function toLuganda(text: string): Promise<TranslationResult> {
       const ai = new GoogleGenAI({
         apiKey: GEMINI_API_KEY,
         httpOptions: {
-          headers: { 'User-Agent': 'aistudio-build' },
           timeout: 10000,
         },
       });
@@ -139,7 +172,7 @@ ${trimmed}`;
         return result;
       }
     } catch (gemmaErr) {
-      console.warn('Gemma Luganda translation error:', gemmaErr);
+      console.warn('[translate] Gemma Luganda translation failed:', (gemmaErr as any)?.message || gemmaErr);
     }
   }
 
