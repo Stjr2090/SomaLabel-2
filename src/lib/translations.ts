@@ -25,6 +25,7 @@ export interface UIStrings {
   sampleOutcomeBlurry: string;
   // Loading Screen
   readingLabel: string;
+  explainingLabel: string;
   checkingExpiry: string;
   checkingRegister: string;
   // Result Screen
@@ -63,6 +64,8 @@ export interface UIStrings {
   errorNotMedicineAction: string;
   errorConnectionMessage: string;
   errorConnectionAction: string;
+  errorRateLimitedMessage: string;
+  errorServiceMessage: string;
   errorGemmaRejectionMessage: string;
   errorGemmaRejectionAction: string;
   // Footer
@@ -89,6 +92,7 @@ export const TRANSLATIONS: Record<Language, UIStrings> = {
     sampleOutcomeBlurry: 'Unreadable error demo',
     // Loading Screen
     readingLabel: 'Reading the label...',
+    explainingLabel: 'Explaining label...',
     checkingExpiry: 'Checking the expiry date...',
     checkingRegister: 'Checking the register...',
     // Result Screen
@@ -127,6 +131,8 @@ export const TRANSLATIONS: Record<Language, UIStrings> = {
     errorNotMedicineAction: 'Try another',
     errorConnectionMessage: "Couldn't connect. Please check your internet.",
     errorConnectionAction: 'Try again',
+    errorRateLimitedMessage: 'Too many scans. Please wait a minute and try again.',
+    errorServiceMessage: 'The AI service had a problem. Please try again.',
     errorGemmaRejectionMessage: 'Gemma model stopped: image input was rejected.',
     errorGemmaRejectionAction: 'Try again',
     // Footer
@@ -152,6 +158,7 @@ export const TRANSLATIONS: Record<Language, UIStrings> = {
     sampleOutcomeBlurry: 'Tekirabika bulungi', // [REVIEW NEEDED]
     // Loading Screen
     readingLabel: 'Tusoma ebiwandiikiddwa ku ddagala...', // [REVIEW NEEDED]
+    explainingLabel: 'Tunnyonnyola eddagala...', // [REVIEW NEEDED]
     checkingExpiry: "Tukebera ennaku z'okuggwako...", // [REVIEW NEEDED]
     checkingRegister: 'Tukebera mu lukalala lwa NDA...', // [REVIEW NEEDED]
     // Result Screen
@@ -190,6 +197,8 @@ export const TRANSLATIONS: Record<Language, UIStrings> = {
     errorNotMedicineAction: 'Gezaako ekirala', // [REVIEW NEEDED]
     errorConnectionMessage: 'Tewali mikutu gya yintaneeti. Ddamu ogezeeko.', // [REVIEW NEEDED]
     errorConnectionAction: 'Ddamu ogezeeko', // [REVIEW NEEDED]
+    errorRateLimitedMessage: 'Okoze okusaka ennyo. Lindirira eddakiika emu olyoke oddemu ogezeeko.', // [REVIEW NEEDED]
+    errorServiceMessage: 'AI service efunye obuzibu. Ddamu ogezeeko.', // [REVIEW NEEDED]
     errorGemmaRejectionMessage: 'Gemma eyimiridde: ekifaananyi tekikkiriziddwa.', // [REVIEW NEEDED]
     errorGemmaRejectionAction: 'Ddamu ogezeeko', // [REVIEW NEEDED]
     // Footer
