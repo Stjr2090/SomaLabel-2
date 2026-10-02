@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
-import { extractMedicineLabel } from './src/lib/extraction.ts';
+import { extractLabel, normalizeLabelText } from './src/lib/extraction.ts';
 import { analyzeExpiry } from './src/lib/expiry.ts';
 import { lookupRegistration, loadNDASeed } from './src/lib/registration.ts';
 import { toLuganda } from './src/lib/translation.ts';
@@ -109,12 +109,32 @@ app.get('/api/nda-list', (_req: Request, res: Response) => {
   res.json({ success: true, count: list.length, items: list });
 });
 
-// Step 1: Extract medicine label information via Gemma 4 open-weight model
+// Step 1: Extract medicine label information via Gemma 4 open-weight model.
+// Primary path is text-only (OCR label text); the image is a fallback.
+const EXTRACT_DEADLINE_MS = 35000;
+
 app.post('/api/extract', rateLimit, async (req: Request, res: Response) => {
+  const deadline = setTimeout(() => {
+    if (!res.headersSent) {
+      res.status(504).json({
+        success: false,
+        status: 'api_error',
+        error: 'timeout',
+        rawApiError: 'timeout',
+        rawModelText: null,
+      });
+    }
+  }, EXTRACT_DEADLINE_MS);
+
   try {
     const { imageBase64, mimeType = 'image/jpeg' } = req.body;
+    const labelText = normalizeLabelText(req.body?.labelText);
 
-    if (!imageBase64 || typeof imageBase64 !== 'string') {
+    if (
+      (!imageBase64 || typeof imageBase64 !== 'string') &&
+      labelText.trim().length < 15
+    ) {
+      clearTimeout(deadline);
       res.status(400).json({
         success: false,
         status: 'api_error',
@@ -126,7 +146,13 @@ app.post('/api/extract', rateLimit, async (req: Request, res: Response) => {
     }
 
     console.log(`Processing scan with model ${MODEL_ID}...`);
-    const extractionResult = await extractMedicineLabel(imageBase64, mimeType);
+    const extractionResult = await extractLabel({
+      labelText,
+      imageBase64: typeof imageBase64 === 'string' ? imageBase64 : '',
+      mimeType,
+    });
+    if (res.headersSent) return;
+    clearTimeout(deadline);
 
     // 1. Model rejected image/multimodal input
     if (extractionResult.status === 'rejection' || extractionResult.rejectedByGemma) {
@@ -206,6 +232,8 @@ app.post('/api/extract', rateLimit, async (req: Request, res: Response) => {
       rawModelText: extractionResult.rawModelText || null,
     });
   } catch (error: any) {
+    clearTimeout(deadline);
+    if (res.headersSent) return;
     console.error('Unhandled server error in /api/extract:', error);
     res.status(500).json({
       success: false,

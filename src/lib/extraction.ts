@@ -135,7 +135,14 @@ export interface ExtractionResult {
 export const PRIMARY_MODEL_DEFAULT = 'gemma-4-26b-a4b-it';
 export const ALTERNATE_MODEL_DEFAULT = 'gemma-4-31b-it';
 export const RETRY_DELAY_MS = 2000;
-export const REQUEST_TIMEOUT_MS = 30000;
+export const REQUEST_TIMEOUT_MS = 15000;
+export const TEXT_REQUEST_TIMEOUT_MS = 15000;
+export const IMAGE_REQUEST_TIMEOUT_MS = 15000;
+export const MAX_LABEL_TEXT_LENGTH = 5000;
+export const MIN_TEXT_LENGTH = 15;
+
+export const UNREADABLE_NOTICE =
+  "We couldn't read this label clearly. Try again in good light, with the label flat and close up.";
 
 /**
  * Returns [primary, alternate] using MODEL_ID as primary.
@@ -168,6 +175,35 @@ export function isRetryableError(err: any): boolean {
   // Avoid matching bare substrings inside other numbers where possible.
   if (/(^|[^0-9])(429|500|503)([^0-9]|$)/.test(msg)) return true;
   return false;
+}
+
+/**
+ * Retry predicate for the text-only path: 429 or 503 only.
+ * A 500 on the text path is not retried on the primary model;
+ * the single alternate attempt still runs.
+ */
+export function isRetryableTextError(err: any): boolean {
+  if (!err) return false;
+  const status = err.status ?? err.code ?? err.statusCode;
+  if (status === 429 || status === 503) return true;
+  if (typeof status === 'string') {
+    const n = Number(status);
+    if (n === 429 || n === 503) return true;
+  }
+
+  const msg = String(err.message || err).toLowerCase();
+  if (/(^|[^0-9])(429|503)([^0-9]|$)/.test(msg)) return true;
+  return false;
+}
+
+/**
+ * Accepts labelText only when it is a string of 5000 characters or fewer.
+ * Anything else is treated as empty (no usable text).
+ */
+export function normalizeLabelText(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  if (value.length > MAX_LABEL_TEXT_LENGTH) return '';
+  return value;
 }
 
 /**
@@ -215,13 +251,15 @@ export type ModelTextCaller = (modelId: string) => Promise<string>;
 
 /**
  * Core retry orchestration. Worst case is 3 model calls:
- * primary attempt, one retry on 429/500/503 after RETRY_DELAY_MS, then one alternate attempt.
+ * primary attempt, one retry on retryable errors after RETRY_DELAY_MS,
+ * then one alternate attempt.
  */
 export async function extractWithCaller(
   caller: ModelTextCaller,
   primary: string,
   alternate: string,
-  sleep: (ms: number) => Promise<void> = delay
+  sleep: (ms: number) => Promise<void> = delay,
+  shouldRetry: (err: any) => boolean = isRetryableError
 ): Promise<ExtractionResult> {
   let lastError: any = null;
   let lastRawText = '';
@@ -254,7 +292,7 @@ export async function extractWithCaller(
   } catch (err: any) {
     lastError = err;
     // Retryable? wait then attempt 2 on primary.
-    if (isRetryableError(err)) {
+    if (shouldRetry(err)) {
       await sleep(RETRY_DELAY_MS);
       try {
         const done = await tryOnce(primary);
@@ -301,6 +339,67 @@ export async function extractMedicineLabel(
   base64ImageData: string,
   mimeType: string = 'image/jpeg'
 ): Promise<ExtractionResult> {
+  return extractFromImage(base64ImageData, mimeType);
+}
+
+function buildClient(timeoutMs: number): GoogleGenAI {
+  return new GoogleGenAI({
+    apiKey: GEMINI_API_KEY,
+    httpOptions: {
+      timeout: timeoutMs,
+    },
+  });
+}
+
+/**
+ * Invokes Gemma with a single text part and no image data.
+ */
+async function callTextModel(
+  ai: GoogleGenAI,
+  modelId: string,
+  labelText: string
+): Promise<{ text: string }> {
+  console.log(`[extractFromText] Calling model: ${modelId}`);
+
+  const userPrompt =
+    `${EXTRACTION_INSTRUCTIONS}\n\n` +
+    'The text below was read from a medicine label photo by OCR and may contain recognition errors. ' +
+    'Copy values exactly as given. Use null when a value is unclear. ' +
+    'Set readable to false if the text does not describe a medicine label.\n\n' +
+    `Label text:\n${labelText}`;
+
+  const response = await ai.models.generateContent({
+    model: modelId,
+    contents: [
+      {
+        role: 'user',
+        parts: [{ text: userPrompt }],
+      },
+    ],
+  });
+
+  return { text: response.text || '' };
+}
+
+/**
+ * Text-only extraction orchestration with an injectable caller.
+ * Retries the primary model once on 429 or 503 only, then tries
+ * the alternate model once. Worst case is 3 model calls.
+ */
+export async function extractTextWithCaller(
+  caller: ModelTextCaller,
+  primary: string,
+  alternate: string,
+  sleep: (ms: number) => Promise<void> = delay
+): Promise<ExtractionResult> {
+  return extractWithCaller(caller, primary, alternate, sleep, isRetryableTextError);
+}
+
+/**
+ * Primary path: structures OCR label text into JSON with Gemma.
+ * Text-only request, 15-second per-call timeout.
+ */
+export async function extractFromText(labelText: string): Promise<ExtractionResult> {
   if (!GEMINI_API_KEY) {
     return {
       status: 'api_error',
@@ -310,20 +409,114 @@ export async function extractMedicineLabel(
     };
   }
 
-  const ai = new GoogleGenAI({
-    apiKey: GEMINI_API_KEY,
-    httpOptions: {
-      timeout: REQUEST_TIMEOUT_MS,
-    },
-  });
-
+  const ai = buildClient(TEXT_REQUEST_TIMEOUT_MS);
   const [primaryGemma, alternateGemma] = getPrimaryAndAlternate();
 
-  console.log(`[extractMedicineLabel] Attempting primary model: ${primaryGemma}`);
+  console.log(`[extractFromText] Attempting primary model: ${primaryGemma}`);
+  const caller: ModelTextCaller = async (modelId: string) => {
+    const { text } = await callTextModel(ai, modelId, labelText);
+    return text;
+  };
+
+  return extractTextWithCaller(caller, primaryGemma, alternateGemma);
+}
+
+/**
+ * Fallback path with an injectable caller: exactly one attempt
+ * on the primary model, no retry and no alternate. On failure
+ * returns unreadable (Retake) instead of api_error.
+ */
+export async function extractImageWithCaller(
+  caller: ModelTextCaller,
+  primary: string
+): Promise<ExtractionResult> {
+  let lastRawText = '';
+  try {
+    const text = await caller(primary);
+    lastRawText = text;
+    const validated = validateExtractedLabel(JSON.parse(extractJsonString(text)));
+    if (validated) {
+      return {
+        status: validated.readable ? 'success' : 'unreadable',
+        data: validated,
+        modelUsed: primary,
+        rawModelText: text,
+        rawApiError: '',
+      };
+    }
+  } catch (err: any) {
+    const errorDetails =
+      typeof err === 'object'
+        ? JSON.stringify(err, Object.getOwnPropertyNames(err))
+        : String(err);
+    return unreadableResult(primary, errorDetails, lastRawText);
+  }
+  return unreadableResult(
+    primary,
+    `Model ${primary} output did not match expected JSON schema.`,
+    lastRawText
+  );
+}
+
+function unreadableResult(
+  modelUsed: string,
+  rawApiError: string,
+  rawModelText: string
+): ExtractionResult {
+  const data = validateExtractedLabel({
+    readable: false,
+    plain_explanation_en: UNREADABLE_NOTICE,
+  })!;
+  return {
+    status: 'unreadable',
+    data,
+    modelUsed,
+    rawModelText: rawModelText || '(No model text generated)',
+    rawApiError,
+  };
+}
+
+/**
+ * Fallback path: single image attempt on the primary model with
+ * a 15-second timeout. Used only when no usable OCR text exists.
+ */
+export async function extractFromImage(
+  base64ImageData: string,
+  mimeType: string = 'image/jpeg'
+): Promise<ExtractionResult> {
+  if (!GEMINI_API_KEY) {
+    return {
+      status: 'api_error',
+      modelUsed: MODEL_ID,
+      rawApiError: 'GEMINI_API_KEY environment variable is not configured.',
+      rawModelText: '',
+    };
+  }
+
+  const ai = buildClient(IMAGE_REQUEST_TIMEOUT_MS);
+  const [primaryGemma] = getPrimaryAndAlternate();
+
+  console.log(`[extractFromImage] Single attempt on primary model: ${primaryGemma}`);
   const caller: ModelTextCaller = async (modelId: string) => {
     const { text } = await callModel(ai, modelId, base64ImageData, mimeType);
     return text;
   };
 
-  return extractWithCaller(caller, primaryGemma, alternateGemma);
+  return extractImageWithCaller(caller, primaryGemma);
+}
+
+/**
+ * Routes a scan: text-only Gemma path when OCR produced usable text,
+ * single image attempt otherwise.
+ */
+export async function extractLabel(input: {
+  labelText: string;
+  imageBase64: string;
+  mimeType?: string;
+}): Promise<ExtractionResult> {
+  const text = (input.labelText || '').trim();
+  if (text.length >= MIN_TEXT_LENGTH) {
+    return extractFromText(text);
+  }
+  return extractFromImage(input.imageBase64, input.mimeType || 'image/jpeg');
 }

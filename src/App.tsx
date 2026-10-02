@@ -5,14 +5,19 @@ import { LoadingScanner } from './components/LoadingScanner.tsx';
 import { ResultCard } from './components/ResultCard.tsx';
 import { ErrorCard, ErrorType } from './components/ErrorCard.tsx';
 import { resizeImageFile } from './lib/image-utils.ts';
+import { readLabelText } from './lib/ocr.ts';
 import { APP_CONFIG } from './lib/config.ts';
 import { SomaScanResult } from './lib/types.ts';
 import { Language, TRANSLATIONS } from './lib/translations.ts';
 
 type AppStep = 'home' | 'loading' | 'result' | 'error';
+type ScanPhase = 'reading' | 'explaining';
+
+const FETCH_TIMEOUT_MS = 40000;
 
 export default function App() {
   const [step, setStep] = useState<AppStep>('home');
+  const [phase, setPhase] = useState<ScanPhase>('reading');
   const [language, setLanguage] = useState<Language>('en');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [scanResult, setScanResult] = useState<SomaScanResult | null>(null);
@@ -23,34 +28,30 @@ export default function App() {
 
   const t = TRANSLATIONS[language];
 
-  // Process user captured/uploaded photo
-  const processImageFile = async (file: File) => {
+  // Sends the scan to the server, aborting if it takes longer than 40 seconds.
+  // Shows 'connection' only when fetch itself throws (network failure or abort),
+  // 'rate_limited' for HTTP 429, and 'service' for any other server error.
+  const postExtract = async (body: { labelText: string; imageBase64: string; mimeType: string }) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
-      setStep('loading');
-      setCustomErrorMsg(null);
-      setRawApiError(null);
-      setRawModelText(null);
-
-      // Resize photo to at most 1024px on the long side as JPEG at quality 0.8
-      const processed = await resizeImageFile(file, APP_CONFIG.maxImageDimension, 0.8);
-      setPreviewUrl(processed.dataUrl);
-
       const response = await fetch('/api/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          imageBase64: processed.base64,
-          mimeType: processed.mimeType,
-        }),
+        body: JSON.stringify(body),
+        signal: controller.signal,
       });
 
       const data = await response.json();
 
-      // If all server retries and fallbacks failed: show "no connection (Try again)" error state
       if (!response.ok || !data.success) {
         setRawApiError(data.rawApiError || data.error || 'All model attempts failed.');
         setRawModelText(data.rawModelText || null);
-        setErrorType('connection');
+        if (!response.ok && response.status === 429) {
+          setErrorType('rate_limited');
+        } else {
+          setErrorType('service');
+        }
         setCustomErrorMsg(null);
         setStep('error');
         return;
@@ -83,26 +84,69 @@ export default function App() {
       setRawApiError(typeof err === 'object' ? JSON.stringify(err, Object.getOwnPropertyNames(err)) : String(err));
       setRawModelText(null);
       setStep('error');
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  // Process user captured/uploaded photo
+  const processImageFile = async (file: File) => {
+    try {
+      setStep('loading');
+      setPhase('reading');
+      setCustomErrorMsg(null);
+      setRawApiError(null);
+      setRawModelText(null);
+
+      // Resize photo to at most 1024px on the long side as JPEG at quality 0.8
+      const processed = await resizeImageFile(file, APP_CONFIG.maxImageDimension, 0.8);
+      setPreviewUrl(processed.dataUrl);
+
+      // Read the printed text on the device before calling the server
+      const labelText = await readLabelText(processed.dataUrl);
+      setPhase('explaining');
+
+      await postExtract({
+        labelText,
+        imageBase64: processed.base64,
+        mimeType: processed.mimeType,
+      });
+    } catch (err: any) {
+      console.error('Scan error:', err);
+      setErrorType('connection');
+      setCustomErrorMsg(null);
+      setRawApiError(typeof err === 'object' ? JSON.stringify(err, Object.getOwnPropertyNames(err)) : String(err));
+      setRawModelText(null);
+      setStep('error');
     }
   };
 
   // Process demo sample pack
   const processDemoPack = async (base64: string) => {
-    try {
-      setStep('loading');
-      setCustomErrorMsg(null);
-      setRawApiError(null);
-      setRawModelText(null);
-      const dataUrl = `data:image/jpeg;base64,${base64}`;
-      setPreviewUrl(dataUrl);
+    setStep('loading');
+    setPhase('reading');
+    setCustomErrorMsg(null);
+    setRawApiError(null);
+    setRawModelText(null);
+    const dataUrl = `data:image/jpeg;base64,${base64}`;
+    setPreviewUrl(dataUrl);
 
+    // Read the printed text on the device before calling the server
+    const labelText = await readLabelText(dataUrl);
+    setPhase('explaining');
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
       const response = await fetch('/api/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          labelText,
           imageBase64: base64,
           mimeType: 'image/jpeg',
         }),
+        signal: controller.signal,
       });
 
       const data = await response.json();
@@ -110,7 +154,11 @@ export default function App() {
       if (!response.ok || !data.success) {
         setRawApiError(data.rawApiError || data.error || 'All model attempts failed.');
         setRawModelText(data.rawModelText || null);
-        setErrorType('connection');
+        if (!response.ok && response.status === 429) {
+          setErrorType('rate_limited');
+        } else {
+          setErrorType('service');
+        }
         setCustomErrorMsg(null);
         setStep('error');
         return;
@@ -137,11 +185,14 @@ export default function App() {
       setRawApiError(typeof err === 'object' ? JSON.stringify(err, Object.getOwnPropertyNames(err)) : String(err));
       setRawModelText(null);
       setStep('error');
+    } finally {
+      clearTimeout(timer);
     }
   };
 
   const handleReset = () => {
     setStep('home');
+    setPhase('reading');
     setPreviewUrl(null);
     setScanResult(null);
     setCustomErrorMsg(null);
@@ -172,6 +223,7 @@ export default function App() {
           <LoadingScanner
             previewUrl={previewUrl}
             language={language}
+            phase={phase}
           />
         )}
 

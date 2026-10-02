@@ -20,6 +20,7 @@ Core AI work is done by the open-weight Gemma 4 26B A4B IT model (`gemma-4-26b-a
 | express | MIT |
 | dotenv | BSD-2-Clause |
 | motion | MIT |
+| tesseract.js | Apache-2.0 |
 | autoprefixer (dev) | MIT |
 | esbuild (dev) | MIT |
 | tailwindcss (dev) | MIT |
@@ -74,14 +75,18 @@ Copy `.env.example` to `.env`. Every variable from `.env.example`:
 
 `.env` is ignored by git and must never be committed.
 
+## Where Gemma is used
+
+Gemma 4 (`gemma-4-26b-a4b-it`, alternate `gemma-4-31b-it`, Apache 2.0) does all label understanding: structuring the label into JSON and writing the plain-language explanation in `src/lib/extraction.ts`, plus the Luganda fallback when Sunbird is not configured. Tesseract.js only converts the photo into raw text, and the expiry and register checks are plain code, not AI.
+
 ## How it works
 
-1. Gemma extracts the printed text from the label photo into structured JSON.
+1. OCR reads the printed text from the label photo on the device, then Gemma structures that text into JSON.
 2. Code checks the expiry date against today and assigns an expiry badge.
 3. A lookup checks the demo register in `data/nda_seed.json` for the registration number.
 4. Sunbird translates to Luganda when configured, otherwise the Gemma model provides a plain Luganda translation marked as machine translation.
 
-Uploads are resized on the client to at most 1024px on the long side as JPEG at quality 0.8. The JSON body limit is 8mb. Extraction uses at most one retry on the primary model for 429, 500 or 503 after 2 seconds, then one attempt on the alternate model (3 calls worst case). `GET /api/health/model` sends a text-only "Reply with OK" to the configured model for health checks.
+Uploads are resized on the client to at most 1024px on the long side as JPEG at quality 0.8. The JSON body limit is 8mb. The text path allows one retry on the primary model for 429 or 503 after 2 seconds, then one attempt on the alternate model; the image fallback makes a single attempt with no retry. The whole `/api/extract` handler has a 35-second deadline and the client aborts at 40 seconds. `GET /api/health/model` sends a text-only "Reply with OK" to the configured model for health checks.
 
 ## Safety
 

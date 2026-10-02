@@ -5,11 +5,13 @@ import { Language, TRANSLATIONS } from '../lib/translations.ts';
 interface LoadingScannerProps {
   previewUrl: string | null;
   language: Language;
+  phase?: 'reading' | 'explaining';
 }
 
 export const LoadingScanner: React.FC<LoadingScannerProps> = ({
   previewUrl,
   language,
+  phase,
 }) => {
   const t = TRANSLATIONS[language];
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
@@ -19,6 +21,11 @@ export const LoadingScanner: React.FC<LoadingScannerProps> = ({
     t.checkingExpiry,
     t.checkingRegister,
   ];
+
+  // When the caller reports a scan phase, show it directly:
+  // "Reading label..." during OCR, "Explaining label..." during the server call.
+  const headline =
+    phase === 'reading' ? t.readingLabel : phase === 'explaining' ? t.explainingLabel : null;
 
   useEffect(() => {
     const timer1 = setTimeout(() => setCurrentStepIndex(1), 1800);
@@ -48,9 +55,9 @@ export const LoadingScanner: React.FC<LoadingScannerProps> = ({
       <div className="flex flex-col items-center text-center px-4 w-full">
         <Loader2 className="w-8 h-8 text-emerald-600 animate-spin mb-4" />
 
-        {/* Progress line changing through the 3 steps */}
+        {/* Progress line: scan phase when known, otherwise rotating steps */}
         <h2 className="text-[19px] font-bold text-slate-800 transition-all duration-300">
-          {steps[currentStepIndex]}
+          {headline ?? steps[currentStepIndex]}
         </h2>
 
         {/* Subtle Step Indicator Dots */}

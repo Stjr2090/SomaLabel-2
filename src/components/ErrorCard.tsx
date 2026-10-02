@@ -4,7 +4,7 @@ import { Language, TRANSLATIONS } from '../lib/translations.ts';
 import { DebugPanel } from './DebugPanel.tsx';
 import { isDebugMode } from '../lib/debug.ts';
 
-export type ErrorType = 'blurry' | 'not_medicine' | 'api_error' | 'connection' | 'gemma_rejection' | 'parse_error';
+export type ErrorType = 'blurry' | 'not_medicine' | 'api_error' | 'connection' | 'gemma_rejection' | 'parse_error' | 'rate_limited' | 'service';
 
 interface ErrorCardProps {
   type: ErrorType;
@@ -50,6 +50,16 @@ export const ErrorCard: React.FC<ErrorCardProps> = ({
       case 'api_error':
         return {
           sentence: customMessage || t.errorConnectionMessage,
+          action: t.errorConnectionAction,
+        };
+      case 'rate_limited':
+        return {
+          sentence: t.errorRateLimitedMessage,
+          action: t.errorConnectionAction,
+        };
+      case 'service':
+        return {
+          sentence: t.errorServiceMessage,
           action: t.errorConnectionAction,
         };
       case 'connection':
