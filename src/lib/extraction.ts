@@ -136,8 +136,8 @@ export const PRIMARY_MODEL_DEFAULT = 'gemma-4-26b-a4b-it';
 export const ALTERNATE_MODEL_DEFAULT = 'gemma-4-31b-it';
 export const RETRY_DELAY_MS = 2000;
 export const REQUEST_TIMEOUT_MS = 15000;
-export const TEXT_REQUEST_TIMEOUT_MS = 30000;
-export const IMAGE_REQUEST_TIMEOUT_MS = 30000;
+export const TEXT_REQUEST_TIMEOUT_MS = 45000;
+export const IMAGE_REQUEST_TIMEOUT_MS = 45000;
 export const MAX_LABEL_TEXT_LENGTH = 5000;
 export const MIN_TEXT_LENGTH = 15;
 
@@ -446,7 +446,7 @@ export async function extractTextWithCaller(
 
 /**
  * Primary path: structures OCR label text into JSON with Gemma.
- * Text-only request, 15-second per-call timeout.
+ * Text-only request, 45-second per-call timeout.
  */
 export async function extractFromText(labelText: string): Promise<ExtractionResult> {
   if (!GEMINI_API_KEY) {
@@ -523,7 +523,7 @@ function unreadableResult(
 
 /**
  * Fallback path: single image attempt on the primary model with
- * a 15-second timeout. Used only when no usable OCR text exists.
+ * a 45-second timeout. Used only when no usable OCR text exists.
  */
 export async function extractFromImage(
   base64ImageData: string,

@@ -108,7 +108,7 @@ app.get('/api/nda-list', (_req: Request, res: Response) => {
 
 // Step 1: Extract medicine label information via Gemma 4 open-weight model.
 // Primary path is text-only (OCR label text); the image is a fallback.
-const EXTRACT_DEADLINE_MS = 35000;
+const EXTRACT_DEADLINE_MS = 50000;
 
 app.post('/api/extract', rateLimit, async (req: Request, res: Response) => {
   const deadline = setTimeout(() => {

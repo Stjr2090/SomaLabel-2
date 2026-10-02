@@ -107,7 +107,7 @@ Gemma 4 (`gemma-4-26b-a4b-it`, Apache 2.0) does all label understanding: structu
 3. A lookup checks the demo register in `data/nda_seed.json` for the registration number.
 4. Sunbird translates to Luganda through `POST /tasks/translate` when configured, reading `output.translated_text`; otherwise the Gemma model provides a plain Luganda translation marked as machine translation.
 
-Uploads are resized on the client to at most 1024px on the long side as JPEG at quality 0.8. The JSON body limit is 8mb. The text path allows one retry on the same model for 429, 500 or 503 after 2 seconds; the image fallback makes a single attempt with no retry. Error responses carry the error message only, never a stack trace. The whole `/api/extract` handler has a 35-second deadline and the client aborts at 40 seconds. `GET /api/health/model` sends a text-only "Reply with OK" to the configured model for health checks.
+Uploads are resized on the client to at most 1024px on the long side as JPEG at quality 0.8. The JSON body limit is 8mb. The text path allows one retry on the same model for 429, 500 or 503 after 2 seconds; the image fallback makes a single attempt with no retry. Error responses carry the error message only, never a stack trace. The whole `/api/extract` handler has a 50-second deadline, each Gemma call has a 45-second timeout, and the client aborts at 55 seconds. `GET /api/health/model` sends a text-only "Reply with OK" to the configured model for health checks.
 
 ## Safety
 

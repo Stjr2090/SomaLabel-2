@@ -13,7 +13,7 @@ import { Language, TRANSLATIONS } from './lib/translations.ts';
 type AppStep = 'home' | 'loading' | 'result' | 'error';
 type ScanPhase = 'reading' | 'explaining';
 
-const FETCH_TIMEOUT_MS = 40000;
+const FETCH_TIMEOUT_MS = 55000;
 
 export default function App() {
   const [step, setStep] = useState<AppStep>('home');
@@ -28,7 +28,7 @@ export default function App() {
 
   const t = TRANSLATIONS[language];
 
-  // Sends the scan to the server, aborting if it takes longer than 40 seconds.
+  // Sends the scan to the server, aborting if it takes longer than 55 seconds.
   // Shows 'connection' only when fetch itself throws (network failure or abort),
   // 'rate_limited' for HTTP 429, and 'service' for any other server error.
   const postExtract = async (body: { labelText: string; imageBase64: string; mimeType: string }) => {
