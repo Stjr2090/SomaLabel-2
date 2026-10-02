@@ -37,7 +37,7 @@ Prerequisites: Node.js 20 or 22, npm.
 ```bash
 git clone https://github.com/Stjr2090/SomaLabel-2
 cd SomaLabel-2
-npm install --legacy-peer-deps
+npm install
 cp .env.example .env
 npm run dev
 ```
