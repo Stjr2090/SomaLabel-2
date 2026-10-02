@@ -136,8 +136,8 @@ export const PRIMARY_MODEL_DEFAULT = 'gemma-4-26b-a4b-it';
 export const ALTERNATE_MODEL_DEFAULT = 'gemma-4-31b-it';
 export const RETRY_DELAY_MS = 2000;
 export const REQUEST_TIMEOUT_MS = 15000;
-export const TEXT_REQUEST_TIMEOUT_MS = 15000;
-export const IMAGE_REQUEST_TIMEOUT_MS = 15000;
+export const TEXT_REQUEST_TIMEOUT_MS = 30000;
+export const IMAGE_REQUEST_TIMEOUT_MS = 30000;
 export const MAX_LABEL_TEXT_LENGTH = 5000;
 export const MIN_TEXT_LENGTH = 15;
 
