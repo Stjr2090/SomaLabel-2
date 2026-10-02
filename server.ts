@@ -255,9 +255,10 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 // Full-stack Vite middleware configuration
 async function startServer() {
   if (process.env.NODE_ENV === 'production') {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
+    const clientDir = path.basename(__dirname) === 'dist' ? __dirname : path.resolve(__dirname, 'dist');
+    app.use(express.static(clientDir));
     app.get('*', (_req: Request, res: Response) => {
-      res.sendFile(path.resolve(__dirname, 'dist/index.html'));
+      res.sendFile(path.resolve(clientDir, 'index.html'));
     });
   } else {
     const { createServer: createViteServer } = await import('vite');
