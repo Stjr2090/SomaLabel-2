@@ -5,6 +5,7 @@ import { LoadingScanner } from './components/LoadingScanner.tsx';
 import { ResultCard } from './components/ResultCard.tsx';
 import { ErrorCard, ErrorType } from './components/ErrorCard.tsx';
 import { resizeImageFile } from './lib/image-utils.ts';
+import { APP_CONFIG } from './lib/config.ts';
 import { SomaScanResult } from './lib/types.ts';
 import { Language, TRANSLATIONS } from './lib/translations.ts';
 
@@ -30,8 +31,8 @@ export default function App() {
       setRawApiError(null);
       setRawModelText(null);
 
-      // Resize photo to max 1024px on the long side as JPEG at quality 80
-      const processed = await resizeImageFile(file, 1024, 0.80);
+      // Resize photo to at most 1024px on the long side as JPEG at quality 0.8
+      const processed = await resizeImageFile(file, APP_CONFIG.maxImageDimension, 0.8);
       setPreviewUrl(processed.dataUrl);
 
       const response = await fetch('/api/extract', {

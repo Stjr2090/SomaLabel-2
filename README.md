@@ -1,145 +1,96 @@
-# SomaLabel (Uganda) 🇺🇬💊
+# SomaLabel
 
-> **"Snap a medicine label. Understand it in English or Luganda."**
-> *(Soma eddagala mu Luganda n'Olungereza)*
+SomaLabel is a mobile-first web app that photographs a medicine label and explains it in plain English or Luganda. It checks the printed expiry date and registration code, and shows a clear result with a pharmacist safety line.
 
-SomaLabel is a mobile-first web application designed for ordinary people in Uganda to photograph a medicine pack or label with their phone and instantly understand three essential things:
-1. **Plain-Language Explanation**: 3 to 5 simple sentences in English or Luganda (at a primary school reading level) explaining what the medicine is, how to take it *only* as printed, and critical safety warnings.
-2. **Expiry Status**: Automated code-based date parser comparing the printed expiry against today's date, displaying high-contrast badges (*Valid*, *Expires within 90 days*, *Expired*, or *Expiry date not found*) and the date in plain words (e.g., *"Expires end of March 2027"*).
-3. **National Drug Authority (NDA) Registration**: Verification against a local demo registry of Uganda National Drug Authority records, flagging matched products, unlisted codes, or missing numbers.
+## Model
 
----
+Core AI work is done by the open-weight Gemma 4 26B A4B IT model (`gemma-4-26b-a4b-it`) via the Gemini API. Gemma is licensed under Apache 2.0. The configured alternate model is `gemma-4-31b-it`. No closed models are used; if both Gemma models fail, the scan returns an API error.
 
-## The Problem SomaLabel Solves
+## Dependencies and licenses
 
-In Uganda and across East Africa:
-- Medicine packaging often uses dense pharmaceutical terminology, small print, complex Latinate abbreviations, or unfamiliar international layouts.
-- Patients with limited formal education or non-fluent English literacy struggle to read expiry dates, leading to unintentional consumption of expired medications.
-- Counterfeit, substandard, or unregistered medicines circulate in informal markets. Patients lack an immediate, accessible tool to check whether a package bears a recognized registration code.
-- Language barrier: Luganda is spoken by millions across Central and Southern Uganda, yet medicine packaging is printed exclusively in English or foreign languages.
+| Dependency | License |
+| :--- | :--- |
+| @google/genai | Apache-2.0 |
+| @tailwindcss/vite | MIT |
+| @vitejs/plugin-react | MIT |
+| lucide-react | ISC |
+| react | MIT |
+| react-dom | MIT |
+| vite | MIT |
+| express | MIT |
+| dotenv | BSD-2-Clause |
+| motion | MIT |
+| autoprefixer (dev) | MIT |
+| esbuild (dev) | MIT |
+| tailwindcss (dev) | MIT |
+| tsx (dev) | MIT |
+| typescript (dev) | Apache-2.0 |
+| @types/node (dev) | MIT |
+| @types/react (dev) | MIT |
+| @types/react-dom (dev) | MIT |
+| @types/express (dev) | MIT |
 
-SomaLabel bridges this divide with high contrast, big tap targets, client-side image resizing, and memory-only privacy protection suitable for low-cost Android smartphones over slow 2G/3G mobile networks.
+## Setup and run
 
----
+Prerequisites: Node.js 20 or 22, npm.
 
-## Model & Architecture
-
-- **Open-Weight Model**: Powered exclusively by Google's open-weight **Gemma 4 instruction-tuned models** (`gemma-4-26b-a4b-it` or `gemma-4-31b-it`) accessed through the Gemini API.
-- **Model Documentation**: [Gemma 4 on ai.google.dev](https://ai.google.dev/gemma/docs/core) (Licensed under Apache 2.0).
-- **Model Independence**: The application is configured with a modular constant `MODEL_ID` in `src/lib/config.ts`. As required by the project specifications, the application does not silently substitute or switch to proprietary Gemini models if image input is rejected.
-- **Privacy by Design**: No photos or scan results are saved to disks or databases. All image processing and inferences are performed strictly in temporary memory.
-
----
-
-## Key Dependencies
-
-- **`@google/genai`**: Official TypeScript SDK for calling open-weight Gemma 4 models server-side.
-- **`express`**: Server-side proxy for API keys and request orchestration.
-- **`vite`**: Modern frontend tooling with dev server middleware integration.
-- **`react` 19 & `react-dom`**: Mobile-first responsive user interface.
-- **`tailwindcss`**: Accessible styling and high-contrast palette.
-- **`lucide-react`**: Accessible iconography.
-
----
-
-## Environment Variables
-
-Copy `.env.example` to `.env` and configure:
-
-| Variable | Description | Default / Example |
-| :--- | :--- | :--- |
-| `GEMINI_API_KEY` | **Required**. API key used to query the Gemma 4 model via the Gemini API. | Injected by AI Studio |
-| `MODEL_ID` | Open-weight Gemma 4 instruction-tuned model name. | `gemma-4-26b-a4b-it` |
-| `SUNBIRD_API_KEY` | Optional. Sunbird AI API key for specialized Ugandan language translation. | `""` |
-| `SUNBIRD_API_URL` | Optional. Sunbird AI translation API endpoint. | `https://api.sunbird.ai/tasks/nllb_translate` |
-| `PORT` | Local server port. | `3000` |
-
----
-
-## How to Run Locally
-
-### Prerequisites
-- Node.js (v20 or v22 recommended)
-- npm or bun
-
-### Setup
 ```bash
-# 1. Clone repository
-git clone <repo-url>
-cd somalabel
-
-# 2. Install dependencies
+git clone https://github.com/Stjr2090/SomaLabel-2
+cd SomaLabel-2
 npm install
-
-# 3. Configure environment variables
 cp .env.example .env
-# Edit .env with your GEMINI_API_KEY
-
-# 4. Start local development server (runs on port 3000)
 npm run dev
 ```
 
-Visit `http://localhost:3000` in your mobile or desktop browser.
+Open `http://localhost:3000`.
 
-### Running Unit Tests
-SomaLabel includes a test suite for the expiry date parser covering all required formats (`EXP 03/2027`, `03/27`, `2027-03`, `MAR 2027`, `12.05.2026`, `EXP: 2027/03/31`, month-end calculation, and edge cases):
-```bash
-npm run test
-```
+Production run:
 
-### Type Checking & Build
 ```bash
-npm run lint
 npm run build
 npm start
 ```
 
----
+`npm run build` builds the Vite client and bundles `server.ts` into `dist/server.js` with esbuild. `npm start` runs `node dist/server.js` with `NODE_ENV=production`.
 
-## How It Works (Step-by-Step)
+Checks:
 
-1. **Capture / Upload**:
-   - The user taps **"Scan label"**, which directly activates the rear camera (`capture="environment"`).
-   - Alternatively, users can choose an existing photo from the gallery or tap one of the built-in **demo medicine sample packs** (Paracetamol 500mg, Coartem 20/120mg, Expired Amoxicillin).
-   - Before transmission, the client resizes the image to a maximum of 1600px on the long edge to minimize cellular data consumption.
+```bash
+npm test
+npm run lint
+```
 
-2. **Step 1: Gemma 4 Extraction**:
-   - The image is processed in memory by the server and sent to Gemma 4 with instructions to extract exact factual fields (product name, active ingredients, dosage form, manufacturer, batch number, manufacture date, expiry date, registration number, warnings, directions).
-   - Hallucination guard: The model is strictly instructed to return `null` for non-visible fields and never add unprinted medical advice.
+## Environment variables
 
-3. **Step 2: Code-Based Expiry Analysis**:
-   - The raw expiry string is parsed by code (not the model).
-   - Handles month-only dates (which expire at the end of the month) and full calendar dates.
-   - Compares with the current date and outputs:
-     - 🔴 **Expired** (red)
-     - 🟡 **Expires within 90 days** (amber)
-     - 🟢 **Valid** (green)
-     - ⚪ **Expiry date not found** (grey)
+Copy `.env.example` to `.env`. Every variable from `.env.example`:
 
-4. **Step 3: NDA Registration Lookup**:
-   - Normalizes the registration code (removing whitespace, case-insensitive).
-   - Looks up the code in `data/nda_seed.json`.
-   - Badges:
-     - 🟢 **Matched** (green, shows verified product name)
-     - 🟡 **Not in our list** (amber: *"Not in our demo list. Check with NDA or a pharmacist."*)
-     - ⚪ **Not printed on the label** (grey)
+| Variable | Description | Example |
+| :--- | :--- | :--- |
+| GEMINI_API_KEY | Required. API key for calling Gemma 4 models via the Gemini API. Read only on the server. | YOUR_GEMINI_API_KEY |
+| MODEL_ID | Primary open-weight model id. | gemma-4-26b-a4b-it |
+| SUNBIRD_API_KEY | Optional. Sunbird AI API key for Luganda translation. Read only on the server. | (empty) |
+| SUNBIRD_API_URL | Optional. Sunbird AI translation endpoint. | https://api.sunbird.ai/tasks/nllb_translate |
+| PORT | Server port. | 3000 |
 
-5. **Step 4: English & Luganda Language Support**:
-   - The result card features an **English | Luganda** toggle.
-   - When Sunbird AI keys are set, it queries the Sunbird AI translation model.
-   - When not configured, it falls back to Gemma 4 for plain Luganda translation, marked with a small `machine translation` notice.
+`.env` is ignored by git and must never be committed.
 
----
+## How it works
 
-## Current Limitations
+1. Gemma extracts the printed text from the label photo into structured JSON.
+2. Code checks the expiry date against today and assigns an expiry badge.
+3. A lookup checks the demo register in `data/nda_seed.json` for the registration number.
+4. Sunbird translates to Luganda when configured, otherwise the Gemma model provides a plain Luganda translation marked as machine translation.
 
-- **Medicines Only**: SomaLabel is strictly designed for human medicine labels and packages. It does not analyze general groceries, veterinary products, or non-medicinal items.
-- **Demo Registration List**: The NDA registration database is seeded with demonstration records (`data/nda_seed.json`). It does not yet connect to a live government NDA database and must be validated with an official pharmacist.
-- **Translation Quality**: Machine translations into Luganda provide general comprehension for ordinary instructions; users are reminded to confirm all medical decisions with a qualified healthcare worker.
-- **Mandatory Safety Disclaimer**: *"This explains what is printed on the label. Confirm with a pharmacist or health worker before use."*
+Uploads are resized on the client to at most 1024px on the long side as JPEG at quality 0.8. The JSON body limit is 8mb. Extraction uses at most one retry on the primary model for 429, 500 or 503 after 2 seconds, then one attempt on the alternate model (3 calls worst case). `GET /api/health/model` sends a text-only "Reply with OK" to the configured model for health checks.
 
----
+## Safety
+
+SomaLabel explains only what is printed on the label and gives no dosing advice beyond the printed directions. It stores no photos; images are processed in memory only. Every result always shows the pharmacist line: "This explains what is printed on the label. Confirm with a pharmacist or health worker before use."
+
+## Limitations
+
+`data/nda_seed.json` is a demo register, not the official NDA register. Always confirm registration with the NDA or a pharmacist. The Luganda interface strings need native-speaker review.
 
 ## License
 
-This project is licensed under the **Apache License 2.0**. See the [LICENSE](./LICENSE) file for details.
+Apache 2.0. See [LICENSE](./LICENSE).

@@ -1,7 +1,7 @@
 /**
  * Client-side image utilities for SomaLabel
- * - Resizes images to max 1600px on the long edge
- * - Converts to base64 for processing in memory
+ * - Resizes images to max 1024px on the long edge
+ * - Converts to JPEG at quality 0.8 for processing in memory
  * - Avoids storing or caching images on disk
  */
 

@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
-import { GEMINI_API_KEY, MODEL_ID } from './config.ts';
+import { MODEL_ID } from './config.ts';
+import { GEMINI_API_KEY } from './server-env.ts';
 import { ExtractedLabel } from './types.ts';
 
 const EXTRACTION_INSTRUCTIONS = `You are SomaLabel's medicine label extraction engine.
@@ -131,26 +132,42 @@ export interface ExtractionResult {
   rejectedByGemma?: boolean;
 }
 
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+export const PRIMARY_MODEL_DEFAULT = 'gemma-4-26b-a4b-it';
+export const ALTERNATE_MODEL_DEFAULT = 'gemma-4-31b-it';
+export const RETRY_DELAY_MS = 2000;
+export const REQUEST_TIMEOUT_MS = 30000;
 
 /**
- * Checks if an error qualifies for retry (500, 503, or 429).
+ * Returns [primary, alternate] using MODEL_ID as primary.
+ * Only Gemma 4 open-weight models are allowed.
  */
-function isRetryableError(err: any): boolean {
-  if (!err) return false;
-  const status = err.status || err.code || err.statusCode;
-  if (status === 500 || status === 503 || status === 429) return true;
+export function getPrimaryAndAlternate(): [string, string] {
+  const configured = MODEL_ID || PRIMARY_MODEL_DEFAULT;
+  const primary =
+    configured === ALTERNATE_MODEL_DEFAULT ? ALTERNATE_MODEL_DEFAULT : PRIMARY_MODEL_DEFAULT;
+  const alternate = primary === PRIMARY_MODEL_DEFAULT ? ALTERNATE_MODEL_DEFAULT : PRIMARY_MODEL_DEFAULT;
+  return [primary, alternate];
+}
 
-  const msg = (err.message || '').toLowerCase();
-  return (
-    msg.includes('500') ||
-    msg.includes('503') ||
-    msg.includes('429') ||
-    msg.includes('internal') ||
-    msg.includes('unavailable') ||
-    msg.includes('resource_exhausted') ||
-    msg.includes('overloaded')
-  );
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(() => resolve(), ms));
+
+/**
+ * True only for 429, 500 or 503.
+ */
+export function isRetryableError(err: any): boolean {
+  if (!err) return false;
+  const status = err.status ?? err.code ?? err.statusCode;
+  if (status === 429 || status === 500 || status === 503) return true;
+  if (typeof status === 'string') {
+    const n = Number(status);
+    if (n === 429 || n === 500 || n === 503) return true;
+  }
+
+  const msg = String(err.message || err).toLowerCase();
+  // Only treat as retryable when the message names one of the three codes.
+  // Avoid matching bare substrings inside other numbers where possible.
+  if (/(^|[^0-9])(429|500|503)([^0-9]|$)/.test(msg)) return true;
+  return false;
 }
 
 /**
@@ -194,13 +211,91 @@ async function callModel(
   return { text: response.text || '' };
 }
 
+export type ModelTextCaller = (modelId: string) => Promise<string>;
+
 /**
- * Executes medicine label extraction with:
- * 1. Primary Gemma 4 model with up to 3 retries on 500, 503, or 429 (waiting 1s, then 2s, then 4s).
- * 2. If all retries fail, switches to the other Gemma 4 model (gemma-4-31b-it <-> gemma-4-26b-a4b-it).
- * 3. If that also fails, falls back to gemini-2.5-flash and sets modelUsed in the response.
- * 4. Places instructions in user prompt (no systemInstruction or JSON response mode for Gemma).
- * 5. Strips code fences and surrounding text before parsing JSON.
+ * Core retry orchestration. Worst case is 3 model calls:
+ * primary attempt, one retry on 429/500/503 after RETRY_DELAY_MS, then one alternate attempt.
+ */
+export async function extractWithCaller(
+  caller: ModelTextCaller,
+  primary: string,
+  alternate: string,
+  sleep: (ms: number) => Promise<void> = delay
+): Promise<ExtractionResult> {
+  let lastError: any = null;
+  let lastRawText = '';
+  let modelUsed = primary;
+
+  const tryOnce = async (modelId: string): Promise<ExtractionResult | null> => {
+    modelUsed = modelId;
+    const text = await caller(modelId);
+    lastRawText = text;
+    const cleanJson = extractJsonString(text);
+    const parsed = JSON.parse(cleanJson);
+    const validated = validateExtractedLabel(parsed);
+    if (validated) {
+      return {
+        status: validated.readable ? 'success' : 'unreadable',
+        data: validated,
+        modelUsed: modelId,
+        rawModelText: text,
+        rawApiError: '',
+      };
+    }
+    lastError = new Error(`Model ${modelId} output did not match expected JSON schema.`);
+    return null;
+  };
+
+  // Attempt 1: primary
+  try {
+    const done = await tryOnce(primary);
+    if (done) return done;
+  } catch (err: any) {
+    lastError = err;
+    // Retryable? wait then attempt 2 on primary.
+    if (isRetryableError(err)) {
+      await sleep(RETRY_DELAY_MS);
+      try {
+        const done = await tryOnce(primary);
+        if (done) return done;
+      } catch (retryErr: any) {
+        lastError = retryErr;
+      }
+    }
+  }
+
+  // If the first attempt failed with a validation error (no throw), lastError is set
+  // but we still fall through to the alternate. If first attempt threw a
+  // non-retryable error, we also fall through directly to the alternate.
+
+  // Attempt 3 (at most): alternate model, exactly once.
+  try {
+    const done = await tryOnce(alternate);
+    if (done) return done;
+  } catch (err: any) {
+    lastError = err;
+  }
+
+  const errorDetails = lastError
+    ? typeof lastError === 'object'
+      ? JSON.stringify(lastError, Object.getOwnPropertyNames(lastError))
+      : String(lastError)
+    : 'All model attempts failed.';
+
+  return {
+    status: 'api_error',
+    modelUsed,
+    rawApiError: errorDetails,
+    rawModelText: lastRawText || '(No model text generated)',
+  };
+}
+
+/**
+ * Executes medicine label extraction with open-weight Gemma 4 models only:
+ * 1. Primary model (MODEL_ID) with at most one retry on 429/500/503 after 2s.
+ * 2. Then a single attempt on the alternate Gemma 4 model.
+ * 3. Otherwise returns api_error. No closed-model fallback.
  */
 export async function extractMedicineLabel(
   base64ImageData: string,
@@ -218,128 +313,17 @@ export async function extractMedicineLabel(
   const ai = new GoogleGenAI({
     apiKey: GEMINI_API_KEY,
     httpOptions: {
-      headers: { 'User-Agent': 'aistudio-build' },
-      timeout: 45000,
+      timeout: REQUEST_TIMEOUT_MS,
     },
   });
 
-  // Determine primary and alternate Gemma 4 models
-  const configuredModel = MODEL_ID || 'gemma-4-31b-it';
-  const primaryGemma =
-    configuredModel === 'gemma-4-26b-a4b-it' ? 'gemma-4-26b-a4b-it' : 'gemma-4-31b-it';
-  const alternateGemma =
-    primaryGemma === 'gemma-4-31b-it' ? 'gemma-4-26b-a4b-it' : 'gemma-4-31b-it';
-  const ultimateFallback = 'gemini-2.5-flash';
+  const [primaryGemma, alternateGemma] = getPrimaryAndAlternate();
 
-  const retryDelays = [1000, 2000, 4000]; // 1s, 2s, 4s
-
-  let lastError: any = null;
-  let lastRawText = '';
-  let modelUsed = primaryGemma;
-
-  // STEP 1: Try Primary Gemma 4 model with up to 3 retries on 500, 503, or 429
   console.log(`[extractMedicineLabel] Attempting primary model: ${primaryGemma}`);
-  for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
-    try {
-      modelUsed = primaryGemma;
-      const { text } = await callModel(ai, primaryGemma, base64ImageData, mimeType);
-      lastRawText = text;
-
-      const cleanJson = extractJsonString(text);
-      const parsed = JSON.parse(cleanJson);
-      const validated = validateExtractedLabel(parsed);
-
-      if (validated) {
-        return {
-          status: validated.readable ? 'success' : 'unreadable',
-          data: validated,
-          modelUsed: primaryGemma,
-          rawModelText: text,
-          rawApiError: '',
-        };
-      }
-      // If JSON was not valid, record for retry
-      lastError = new Error('Model output did not match expected JSON schema.');
-    } catch (err: any) {
-      lastError = err;
-      console.warn(`[extractMedicineLabel] Primary model ${primaryGemma} attempt ${attempt + 1} error:`, err?.message || err);
-
-      // Check if retryable (500, 503, 429) and attempts remaining
-      if (attempt < retryDelays.length && isRetryableError(err)) {
-        const waitMs = retryDelays[attempt];
-        console.log(`[extractMedicineLabel] Retrying ${primaryGemma} in ${waitMs / 1000}s...`);
-        await delay(waitMs);
-        continue;
-      }
-
-      // If not retryable or max retries reached, break to alternate model
-      break;
-    }
-  }
-
-  // STEP 2: If primary Gemma retries all failed, try once more with the other Gemma 4 model
-  console.log(`[extractMedicineLabel] Primary model failed. Trying alternate Gemma model: ${alternateGemma}`);
-  try {
-    modelUsed = alternateGemma;
-    const { text } = await callModel(ai, alternateGemma, base64ImageData, mimeType);
-    lastRawText = text;
-
-    const cleanJson = extractJsonString(text);
-    const parsed = JSON.parse(cleanJson);
-    const validated = validateExtractedLabel(parsed);
-
-    if (validated) {
-      return {
-        status: validated.readable ? 'success' : 'unreadable',
-        data: validated,
-        modelUsed: alternateGemma,
-        rawModelText: text,
-        rawApiError: '',
-      };
-    }
-    lastError = new Error(`Alternate model ${alternateGemma} output was not valid JSON.`);
-  } catch (err: any) {
-    lastError = err;
-    console.warn(`[extractMedicineLabel] Alternate model ${alternateGemma} failed:`, err?.message || err);
-  }
-
-  // STEP 3: If alternate Gemma also fails, fall back to gemini-2.5-flash
-  console.log(`[extractMedicineLabel] Gemma models failed. Falling back to: ${ultimateFallback}`);
-  try {
-    modelUsed = ultimateFallback;
-    const { text } = await callModel(ai, ultimateFallback, base64ImageData, mimeType);
-    lastRawText = text;
-
-    const cleanJson = extractJsonString(text);
-    const parsed = JSON.parse(cleanJson);
-    const validated = validateExtractedLabel(parsed);
-
-    if (validated) {
-      return {
-        status: validated.readable ? 'success' : 'unreadable',
-        data: validated,
-        modelUsed: ultimateFallback,
-        rawModelText: text,
-        rawApiError: '',
-      };
-    }
-    lastError = new Error(`Fallback model ${ultimateFallback} output was not valid JSON.`);
-  } catch (err: any) {
-    lastError = err;
-    console.error(`[extractMedicineLabel] Ultimate fallback ${ultimateFallback} also failed:`, err?.message || err);
-  }
-
-  // If ALL attempts failed, return final failure with full debug details
-  const errorDetails = lastError
-    ? typeof lastError === 'object'
-      ? JSON.stringify(lastError, Object.getOwnPropertyNames(lastError))
-      : String(lastError)
-    : 'All model attempts failed.';
-
-  return {
-    status: 'api_error',
-    modelUsed,
-    rawApiError: errorDetails,
-    rawModelText: lastRawText || '(No model text generated)',
+  const caller: ModelTextCaller = async (modelId: string) => {
+    const { text } = await callModel(ai, modelId, base64ImageData, mimeType);
+    return text;
   };
+
+  return extractWithCaller(caller, primaryGemma, alternateGemma);
 }

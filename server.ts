@@ -1,7 +1,8 @@
-import express, { Request, Response } from 'express';
+import express, { NextFunction, Request, Response } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { GoogleGenAI } from '@google/genai';
 import { extractMedicineLabel } from './src/lib/extraction.ts';
 import { analyzeExpiry } from './src/lib/expiry.ts';
 import { lookupRegistration, loadNDASeed } from './src/lib/registration.ts';
@@ -15,10 +16,39 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 
-// Memory-only JSON parser with reasonable limit for base64 images
-app.use(express.json({ limit: '25mb' }));
+// Memory-only JSON parser: 8mb cap for resized 1024px JPEG uploads
+app.use(express.json({ limit: '8mb' }));
+
+// Simple in-memory rate limit: 10 requests per minute per IP
+const rateBuckets = new Map<string, number[]>();
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX = 10;
+
+export function clearRateLimits(): void {
+  rateBuckets.clear();
+}
+
+function rateLimit(_req: Request, res: Response, next: NextFunction): void {
+  const req = _req as Request & { ip?: string };
+  const ip =
+    req.ip || (req.socket && req.socket.remoteAddress) || 'unknown';
+  const now = Date.now();
+  const hits = rateBuckets.get(ip) || [];
+  const fresh = hits.filter((t) => now - t < RATE_WINDOW_MS);
+  if (fresh.length >= RATE_MAX) {
+    res.status(429).json({
+      success: false,
+      error: 'Too many requests. Please wait a minute and try again.',
+    });
+    return;
+  }
+  fresh.push(now);
+  rateBuckets.set(ip, fresh);
+  next();
+}
 
 // Health Check API
 app.get('/api/health', (_req: Request, res: Response) => {
@@ -31,6 +61,48 @@ app.get('/api/health', (_req: Request, res: Response) => {
   });
 });
 
+// Model health check: text-only "Reply with OK" against MODEL_ID
+app.get('/api/health/model', rateLimit, async (_req: Request, res: Response) => {
+  const started = Date.now();
+  try {
+    const apiKey = process.env.GEMINI_API_KEY || '';
+    if (!apiKey) {
+      res.status(502).json({
+        ok: false,
+        modelUsed: MODEL_ID,
+        latencyMs: Date.now() - started,
+        rawError: 'GEMINI_API_KEY environment variable is not configured.',
+      });
+      return;
+    }
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: { timeout: 30000 },
+    });
+    await ai.models.generateContent({
+      model: MODEL_ID,
+      contents: [{ role: 'user', parts: [{ text: 'Reply with OK' }] }],
+    });
+    res.json({
+      ok: true,
+      modelUsed: MODEL_ID,
+      latencyMs: Date.now() - started,
+      rawError: null,
+    });
+  } catch (err: any) {
+    const rawError =
+      err && typeof err === 'object'
+        ? JSON.stringify(err, Object.getOwnPropertyNames(err)).slice(0, 2000)
+        : String(err).slice(0, 2000);
+    res.status(502).json({
+      ok: false,
+      modelUsed: MODEL_ID,
+      latencyMs: Date.now() - started,
+      rawError,
+    });
+  }
+});
+
 // Demo NDA Registry list
 app.get('/api/nda-list', (_req: Request, res: Response) => {
   const list = loadNDASeed();
@@ -38,7 +110,7 @@ app.get('/api/nda-list', (_req: Request, res: Response) => {
 });
 
 // Step 1: Extract medicine label information via Gemma 4 open-weight model
-app.post('/api/extract', async (req: Request, res: Response) => {
+app.post('/api/extract', rateLimit, async (req: Request, res: Response) => {
   try {
     const { imageBase64, mimeType = 'image/jpeg' } = req.body;
 
@@ -146,7 +218,7 @@ app.post('/api/extract', async (req: Request, res: Response) => {
 });
 
 // Step 4: Luganda Translation Endpoint
-app.post('/api/translate', async (req: Request, res: Response) => {
+app.post('/api/translate', rateLimit, async (req: Request, res: Response) => {
   try {
     const { text } = req.body;
     if (!text || typeof text !== 'string') {
@@ -160,6 +232,24 @@ app.post('/api/translate', async (req: Request, res: Response) => {
     console.error('Translation error in /api/translate:', err);
     res.status(500).json({ success: false, error: err.message || 'Failed to translate to Luganda.' });
   }
+});
+
+// Payload-too-large handler: clear 413 above the 8mb cap
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  if (err && (err.type === 'entity.too.large' || err.status === 413)) {
+    res.status(413).json({
+      success: false,
+      status: 'api_error',
+      error: 'Image is too large. Please retake the photo; images are resized to 1024px before upload and must be under 8MB.',
+    });
+    return;
+  }
+  res.status(err?.status || 500).json({
+    success: false,
+    status: 'api_error',
+    error: err?.message || 'Unexpected server error.',
+  });
 });
 
 // Full-stack Vite middleware configuration

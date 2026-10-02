@@ -6,12 +6,21 @@ interface DebugPanelProps {
   rawModelText?: string | null;
 }
 
+interface ModelHealth {
+  ok: boolean;
+  modelUsed: string;
+  latencyMs: number;
+  rawError: string | null;
+}
+
 export const DebugPanel: React.FC<DebugPanelProps> = ({
   rawApiError,
   rawModelText,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [health, setHealth] = useState<ModelHealth | null>(null);
+  const [checking, setChecking] = useState(false);
 
   // If both are completely empty, don't show an empty panel
   if (!rawApiError && !rawModelText) {
@@ -23,6 +32,29 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({
     navigator.clipboard?.writeText(textToCopy);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const checkModelHealth = async () => {
+    setChecking(true);
+    try {
+      const res = await fetch('/api/health/model');
+      const data = await res.json();
+      setHealth({
+        ok: !!data.ok,
+        modelUsed: data.modelUsed || 'unknown',
+        latencyMs: data.latencyMs ?? -1,
+        rawError: data.rawError || null,
+      });
+    } catch (err: any) {
+      setHealth({
+        ok: false,
+        modelUsed: 'unknown',
+        latencyMs: -1,
+        rawError: err?.message || String(err),
+      });
+    } finally {
+      setChecking(false);
+    }
   };
 
   return (
@@ -46,7 +78,15 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({
 
       {isOpen && (
         <div className="p-4 pt-2 border-t border-slate-200 space-y-4">
-          <div className="flex justify-end">
+          <div className="flex justify-between items-center gap-2">
+            <button
+              type="button"
+              onClick={checkModelHealth}
+              disabled={checking}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 active:bg-slate-100 font-semibold text-[11px] disabled:opacity-50"
+            >
+              <span>{checking ? 'Checking model…' : 'Check model health'}</span>
+            </button>
             <button
               type="button"
               onClick={handleCopy}
@@ -65,6 +105,15 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({
               )}
             </button>
           </div>
+
+          {health && (
+            <div className="bg-white border border-slate-200 rounded-xl p-3 font-mono text-[11px] text-slate-700">
+              <p>ok: {String(health.ok)}</p>
+              <p>modelUsed: {health.modelUsed}</p>
+              <p>latencyMs: {health.latencyMs}</p>
+              <p className="break-all">rawError: {health.rawError || '(none)'}</p>
+            </div>
+          )}
 
           {/* Raw API Error */}
           <div>
