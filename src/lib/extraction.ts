@@ -148,7 +148,7 @@ export function getPrimaryAndAlternate(): [string, string] {
   return [primary, alternate];
 }
 
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(() => resolve(), ms));
 
 /**
  * True only for 429, 500 or 503.
