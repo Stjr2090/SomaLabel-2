@@ -16,5 +16,5 @@ export const GEMINI_API_KEY = getServerEnv('GEMINI_API_KEY', '');
 export const SUNBIRD_API_KEY = getServerEnv('SUNBIRD_API_KEY', '');
 export const SUNBIRD_API_URL = getServerEnv(
   'SUNBIRD_API_URL',
-  'https://api.sunbird.ai/tasks/nllb_translate'
+  'https://api.sunbird.ai/tasks/translate'
 );

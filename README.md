@@ -4,7 +4,7 @@ SomaLabel is a mobile-first web app that photographs a medicine label and explai
 
 ## Model
 
-Core AI work is done by the open-weight Gemma 4 26B A4B IT model (`gemma-4-26b-a4b-it`) via the Gemini API. Gemma is licensed under Apache 2.0. The configured alternate model is `gemma-4-31b-it`. No closed models are used; if both Gemma models fail, the scanner returns an API error.
+Core AI work is done by the open-weight Gemma 4 26B A4B IT model (`gemma-4-26b-a4b-it`) via the Gemini API. Gemma is licensed under Apache 2.0. The scanner uses this single model. No closed models are used; if the Gemma call fails after its retry, the scanner returns an API error.
 
 ## Dependencies and licenses
 
@@ -91,23 +91,23 @@ Copy `.env.example` to `.env`. Every variable from `.env.example`:
 | GEMINI_API_KEY  | Required. API key for calling Gemma 4 models via the Gemini API. Read only on the server. | YOUR_GEMINI_API_KEY                         |
 | MODEL_ID        | Primary open-weight model id.                                                             | gemma-4-26b-a4b-it                          |
 | SUNBIRD_API_KEY | Optional. Sunbird AI API key for Luganda translation. Read only on the server.            | (empty)                                     |
-| SUNBIRD_API_URL | Optional. Sunbird AI translation endpoint.                                                | https://api.sunbird.ai/tasks/nllb_translate |
+| SUNBIRD_API_URL | Optional. Sunbird AI translation endpoint.                                                | https://api.sunbird.ai/tasks/translate |
 | PORT            | Server port.                                                                              | 3000                                        |
 
 `.env` is ignored by git and must never be committed.
 
 ## Where Gemma is used
 
-Gemma 4 (`gemma-4-26b-a4b-it`, alternate `gemma-4-31b-it`, Apache 2.0) does all label understanding: structuring the label into JSON and writing the plain-language explanation in `src/lib/extraction.ts`, plus the Luganda fallback when Sunbird is not configured. Tesseract.js only converts the photo into raw text, and the expiry and register checks are plain code, not AI.
+Gemma 4 (`gemma-4-26b-a4b-it`, Apache 2.0) does all label understanding: structuring the label into JSON and writing the plain-language explanation in `src/lib/extraction.ts`, plus the Luganda fallback when Sunbird is not configured. Tesseract.js only converts the photo into raw text, and the expiry and register checks are plain code, not AI.
 
 ## How it works
 
 1. OCR reads the printed text from the label photo on the device, then Gemma structures that text into JSON.
 2. Code checks the expiry date against today and assigns an expiry badge.
 3. A lookup checks the demo register in `data/nda_seed.json` for the registration number.
-4. Sunbird translates to Luganda when configured, otherwise the Gemma model provides a plain Luganda translation marked as machine translation.
+4. Sunbird translates to Luganda through `POST /tasks/translate` when configured, reading `output.translated_text`; otherwise the Gemma model provides a plain Luganda translation marked as machine translation.
 
-Uploads are resized on the client to at most 1024px on the long side as JPEG at quality 0.8. The JSON body limit is 8mb. The text path allows one retry on the primary model for 429 or 503 after 2 seconds, then one attempt on the alternate model; the image fallback makes a single attempt with no retry. The whole `/api/extract` handler has a 35-second deadline and the client aborts at 40 seconds. `GET /api/health/model` sends a text-only "Reply with OK" to the configured model for health checks.
+Uploads are resized on the client to at most 1024px on the long side as JPEG at quality 0.8. The JSON body limit is 8mb. The text path allows one retry on the same model for 429, 500 or 503 after 2 seconds; the image fallback makes a single attempt with no retry. Error responses carry the error message only, never a stack trace. The whole `/api/extract` handler has a 35-second deadline and the client aborts at 40 seconds. `GET /api/health/model` sends a text-only "Reply with OK" to the configured model for health checks.
 
 ## Safety
 

@@ -156,6 +156,16 @@ export function getPrimaryAndAlternate(): [string, string] {
   return [primary, alternate];
 }
 
+/**
+ * Returns only the error message, never the stack trace.
+ */
+export function errorMessage(err: any): string {
+  if (!err) return 'Unknown error.';
+  if (typeof err === 'string') return err;
+  const msg = err.message ?? String(err);
+  return String(msg).slice(0, 500);
+}
+
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(() => resolve(), ms));
 
 /**
@@ -315,11 +325,7 @@ export async function extractWithCaller(
     lastError = err;
   }
 
-  const errorDetails = lastError
-    ? typeof lastError === 'object'
-      ? JSON.stringify(lastError, Object.getOwnPropertyNames(lastError))
-      : String(lastError)
-    : 'All model attempts failed.';
+  const errorDetails = lastError ? errorMessage(lastError) : 'All model attempts failed.';
 
   return {
     status: 'api_error',
@@ -383,16 +389,59 @@ async function callTextModel(
 
 /**
  * Text-only extraction orchestration with an injectable caller.
- * Retries the primary model once on 429 or 503 only, then tries
- * the alternate model once. Worst case is 3 model calls.
+ * Uses the primary Gemma 4 model only. Retries once on the same model
+ * after RETRY_DELAY_MS on 429, 500 or 503. Worst case is 2 model calls.
+ * The alternate parameter is kept for call-site compatibility and is unused.
  */
 export async function extractTextWithCaller(
   caller: ModelTextCaller,
   primary: string,
-  alternate: string,
+  _alternate?: string,
   sleep: (ms: number) => Promise<void> = delay
 ): Promise<ExtractionResult> {
-  return extractWithCaller(caller, primary, alternate, sleep, isRetryableTextError);
+  let lastError: any = null;
+  let lastRawText = '';
+
+  const tryOnce = async (): Promise<ExtractionResult | null> => {
+    const text = await caller(primary);
+    lastRawText = text;
+    const validated = validateExtractedLabel(JSON.parse(extractJsonString(text)));
+    if (validated) {
+      return {
+        status: validated.readable ? 'success' : 'unreadable',
+        data: validated,
+        modelUsed: primary,
+        rawModelText: text,
+        rawApiError: '',
+      };
+    }
+    lastError = new Error(`Model ${primary} output did not match expected JSON schema.`);
+    return null;
+  };
+
+  try {
+    const done = await tryOnce();
+    if (done) return done;
+  } catch (err: any) {
+    lastError = err;
+    if (isRetryableError(err)) {
+      console.warn(`[extractFromText] ${primary} failed (${errorMessage(err)}), retrying once`);
+      await sleep(RETRY_DELAY_MS);
+      try {
+        const done = await tryOnce();
+        if (done) return done;
+      } catch (retryErr: any) {
+        lastError = retryErr;
+      }
+    }
+  }
+
+  return {
+    status: 'api_error',
+    modelUsed: primary,
+    rawApiError: lastError ? errorMessage(lastError) : 'Model attempt failed.',
+    rawModelText: lastRawText || '(No model text generated)',
+  };
 }
 
 /**
@@ -410,15 +459,15 @@ export async function extractFromText(labelText: string): Promise<ExtractionResu
   }
 
   const ai = buildClient(TEXT_REQUEST_TIMEOUT_MS);
-  const [primaryGemma, alternateGemma] = getPrimaryAndAlternate();
+  const [primaryGemma] = getPrimaryAndAlternate();
 
-  console.log(`[extractFromText] Attempting primary model: ${primaryGemma}`);
+  console.log(`[extractFromText] Attempting model: ${primaryGemma}`);
   const caller: ModelTextCaller = async (modelId: string) => {
     const { text } = await callTextModel(ai, modelId, labelText);
     return text;
   };
 
-  return extractTextWithCaller(caller, primaryGemma, alternateGemma);
+  return extractTextWithCaller(caller, primaryGemma);
 }
 
 /**
@@ -445,11 +494,7 @@ export async function extractImageWithCaller(
       };
     }
   } catch (err: any) {
-    const errorDetails =
-      typeof err === 'object'
-        ? JSON.stringify(err, Object.getOwnPropertyNames(err))
-        : String(err);
-    return unreadableResult(primary, errorDetails, lastRawText);
+    return unreadableResult(primary, errorMessage(err), lastRawText);
   }
   return unreadableResult(
     primary,

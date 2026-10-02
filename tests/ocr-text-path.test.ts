@@ -40,7 +40,7 @@ test('extractFromText - parses a mocked fenced JSON response', async () => {
   assert.equal(result.modelUsed, 'gemma-4-26b-a4b-it');
 });
 
-test('text path - makes at most 3 calls when every call fails', async () => {
+test('text path - makes at most 2 calls on one model when every call fails', async () => {
   let calls = 0;
   const alwaysFailing = async (_modelId: string): Promise<string> => {
     calls += 1;
@@ -57,9 +57,9 @@ test('text path - makes at most 3 calls when every call fails', async () => {
     noSleep
   );
 
-  assert.ok(calls <= 3);
-  assert.equal(calls, 3);
+  assert.equal(calls, 2);
   assert.equal(result.status, 'api_error');
+  assert.equal(result.modelUsed, 'gemma-4-26b-a4b-it');
 });
 
 test('image fallback - makes exactly 1 call when it gets a 500', async () => {
@@ -94,4 +94,19 @@ test('labelText over 5000 characters is ignored', async (t) => {
     assert.equal(normalizeLabelText(null), '');
     assert.equal(normalizeLabelText(123), '');
   });
+});
+
+test('text path - retries a 500 once on the same model', async () => {
+  const models: string[] = [];
+  const always500 = async (modelId: string): Promise<string> => {
+    models.push(modelId);
+    const err: any = new Error('Internal error encountered.');
+    err.status = 500;
+    throw err;
+  };
+  const noSleep = async (_ms: number): Promise<void> => {};
+  const result = await extractTextWithCaller(always500, 'gemma-4-26b-a4b-it', 'gemma-4-31b-it', noSleep);
+  assert.deepEqual(models, ['gemma-4-26b-a4b-it', 'gemma-4-26b-a4b-it']);
+  assert.equal(result.status, 'api_error');
+  assert.equal(result.rawApiError, 'Internal error encountered.');
 });
