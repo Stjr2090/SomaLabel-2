@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Header } from './components/Header.tsx';
 import { HomeScanner } from './components/HomeScanner.tsx';
 import { LoadingScanner } from './components/LoadingScanner.tsx';
 import { ResultCard } from './components/ResultCard.tsx';
 import { ErrorCard, ErrorType } from './components/ErrorCard.tsx';
 import { resizeImageFile } from './lib/image-utils.ts';
-import { readLabelText } from './lib/ocr.ts';
+import { readLabelText, warmupOcr } from './lib/ocr.ts';
+import { hasUsableLabelText } from './lib/label-schema.ts';
 import { APP_CONFIG } from './lib/config.ts';
 import { SomaScanResult } from './lib/types.ts';
 import { Language, TRANSLATIONS } from './lib/translations.ts';
@@ -27,6 +28,13 @@ export default function App() {
   const [rawModelText, setRawModelText] = useState<string | null>(null);
 
   const t = TRANSLATIONS[language];
+
+  // Start downloading the OCR worker and English model while the user is still
+  // on the home screen, so the first scan is not spent waiting for them.
+  useEffect(() => {
+    warmupOcr();
+  }, []);
+
 
   // Sends the scan to the server, aborting if it takes longer than 55 seconds.
   // Shows 'connection' only when fetch itself throws (network failure or abort),
@@ -106,9 +114,13 @@ export default function App() {
       const labelText = await readLabelText(processed.dataUrl);
       setPhase('explaining');
 
+      // Send the photo only when OCR could not produce usable text: the label
+      // reader works from text, so an unnecessary image is pure upload time.
+      const usableText = hasUsableLabelText(labelText);
+
       await postExtract({
-        labelText,
-        imageBase64: processed.base64,
+        labelText: usableText ? labelText : '',
+        imageBase64: usableText ? '' : processed.base64,
         mimeType: processed.mimeType,
       });
     } catch (err: any) {
@@ -134,6 +146,7 @@ export default function App() {
     // Read the printed text on the device before calling the server
     const labelText = await readLabelText(dataUrl);
     setPhase('explaining');
+    const usableText = hasUsableLabelText(labelText);
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -142,8 +155,8 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          labelText,
-          imageBase64: base64,
+          labelText: usableText ? labelText : '',
+          imageBase64: usableText ? '' : base64,
           mimeType: 'image/jpeg',
         }),
         signal: controller.signal,

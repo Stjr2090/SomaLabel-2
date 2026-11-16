@@ -80,3 +80,63 @@ export function resizeImageFile(
     reader.readAsDataURL(file);
   });
 }
+
+/**
+ * Prepares a photo for OCR only. Never uploaded.
+ *
+ * OCR does better with more pixels and more contrast: the label is upscaled
+ * (at most 2x, to a 1600px long edge), converted to grayscale and stretched
+ * around mid-grey. A blurry or dim phone photo that reads as noise at 1024px
+ * often becomes legible here.
+ */
+export function prepareForOcr(
+  dataUrl: string,
+  targetLongEdge: number = 1600
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onerror = () => reject(new Error('Failed to decode image data for OCR.'));
+    img.onload = () => {
+      const srcW = img.naturalWidth || img.width;
+      const srcH = img.naturalHeight || img.height;
+      const longEdge = Math.max(srcW, srcH);
+      const scale = longEdge >= targetLongEdge ? 1 : Math.min(2, targetLongEdge / longEdge);
+      const width = Math.max(1, Math.round(srcW * scale));
+      const height = Math.max(1, Math.round(srcH * scale));
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) {
+        reject(new Error('Canvas 2D context not available.'));
+        return;
+      }
+
+      // White matte, so transparent PNGs are not read as black.
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(img, 0, 0, width, height);
+
+      try {
+        const frame = ctx.getImageData(0, 0, width, height);
+        const px = frame.data;
+        const contrast = 1.8;
+        for (let i = 0; i < px.length; i += 4) {
+          const luminance = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+          const stretched = Math.min(255, Math.max(0, (luminance - 128) * contrast + 128));
+          px[i] = stretched;
+          px[i + 1] = stretched;
+          px[i + 2] = stretched;
+        }
+        ctx.putImageData(frame, 0, 0);
+      } catch {
+        // If pixel access is blocked, the greyscale pass is skipped; the
+        // upscaled colour image is still better than nothing.
+      }
+
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.src = dataUrl;
+  });
+}

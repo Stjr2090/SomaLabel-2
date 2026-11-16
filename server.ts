@@ -8,6 +8,8 @@ import { analyzeExpiry } from './src/lib/expiry.ts';
 import { lookupRegistration, loadNDASeed } from './src/lib/registration.ts';
 import { toLuganda } from './src/lib/translation.ts';
 import { MODEL_ID } from './src/lib/config.ts';
+import { GROQ_API_KEY } from './src/lib/server-env.ts';
+import { checkGroqHealth } from './src/lib/groq.ts';
 import { SomaScanResult } from './src/lib/types.ts';
 
 dotenv.config();
@@ -56,13 +58,25 @@ app.get('/api/health', (_req: Request, res: Response) => {
     status: 'ok',
     appName: 'SomaLabel',
     model: MODEL_ID,
+    primaryProvider: GROQ_API_KEY ? 'groq' : 'gemini',
     openWeight: true,
     timestamp: new Date().toISOString(),
   });
 });
 
-// Model health check: text-only "Reply with OK" against MODEL_ID
+// Model health check: probes the configured primary provider with a short text call.
 app.get('/api/health/model', rateLimit, async (_req: Request, res: Response) => {
+  if (GROQ_API_KEY) {
+    const health = await checkGroqHealth();
+    res.status(health.ok ? 200 : 502).json({
+      ok: health.ok,
+      modelUsed: health.modelUsed,
+      latencyMs: health.latencyMs,
+      rawError: health.rawError,
+    });
+    return;
+  }
+
   const started = Date.now();
   try {
     const apiKey = process.env.GEMINI_API_KEY || '';
@@ -135,8 +149,8 @@ app.post('/api/extract', rateLimit, async (req: Request, res: Response) => {
       res.status(400).json({
         success: false,
         status: 'api_error',
-        error: 'Missing imageBase64 string in request.',
-        rawApiError: 'Missing imageBase64 parameter in request body.',
+        error: 'No label photo or readable label text was received. Please retake the photo.',
+        rawApiError: 'Request had neither a usable labelText nor an imageBase64 payload.',
         rawModelText: null,
       });
       return;
@@ -170,8 +184,8 @@ app.post('/api/extract', rateLimit, async (req: Request, res: Response) => {
       res.status(500).json({
         success: false,
         status: 'api_error',
-        error: extractionResult.rawApiError || 'API error from Gemma model.',
-        rawApiError: extractionResult.rawApiError || null,
+        error: 'The medicine reader is busy right now. Please try again in a few seconds.',
+        rawApiError: extractionResult.rawApiError || 'API error from the label reader.',
         rawModelText: extractionResult.rawModelText || null,
         modelUsed: extractionResult.modelUsed,
       });

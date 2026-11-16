@@ -1,4 +1,7 @@
 import { ExpiryAnalysis, ExpiryBadgeStatus } from './types.ts';
+import { normalizeOcrDigits } from './ocr-repair.ts';
+
+export { normalizeOcrDigits };
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -57,12 +60,14 @@ export function getLastDayOfMonth(year: number, month: number): number {
 export function parseRawExpiryString(rawText: string | null | undefined): ParsedComponents | null {
   if (!rawText || typeof rawText !== 'string') return null;
 
-  const cleaned = rawText
-    .trim()
-    .toUpperCase()
-    // Remove common prefixes
-    .replace(/^(EXP|EXPIRY|EXP\.? DATE|EXPIRY DATE|EXP DATE|BB|BEST BEFORE|USE BY|USE BEFORE)\s*[:.-]?\s*/i, '')
-    .trim();
+  const cleaned = normalizeOcrDigits(
+    rawText
+      .trim()
+      .toUpperCase()
+      // Remove common prefixes
+      .replace(/^(EXP|EXPIRY|EXP\.? DATE|EXPIRY DATE|EXP DATE|BB|BEST BEFORE|USE BY|USE BEFORE)\s*[:.-]?\s*/i, '')
+      .trim()
+  );
 
   if (!cleaned) return null;
 
