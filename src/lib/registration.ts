@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from 'fs';
 import path from 'path';
 import { RegistrationAnalysis, RegistrationBadgeStatus } from './types.ts';
+import { normalizeOcrDigits } from './ocr-repair.ts';
 
 export interface NDARecord {
   registration_number: string;
@@ -21,7 +22,22 @@ let cachedSeed: NDARecord[] | null = null;
  */
 export function normalizeRegistrationNumber(raw: string | null | undefined): string {
   if (!raw || typeof raw !== 'string') return '';
-  return raw.replace(/\s+/g, '').toLowerCase();
+  // Repair OCR confusion first: on the demo packs "0189" is often read "@189".
+  return normalizeOcrDigits(raw).replace(/\s+/g, '').toLowerCase();
+}
+
+/**
+ * Finds a printed NDA/UG registration code in raw OCR text.
+ *
+ * Used only when the model does not return one: the code has a fixed printed
+ * shape ("NDA/MAL/HPD/0189", "NDA/MED/2024/0912", "UG/MED/9981-SAMPLE"), and
+ * the model intermittently drops it when it shares a line with EXP/MFG/BATCH.
+ */
+export function recoverRegistrationNumber(rawText: string | null | undefined): string | null {
+  if (!rawText || typeof rawText !== 'string') return null;
+  const match = rawText.match(/\b(?:NDA|UG)\s*[/|-]\s*[A-Z]{3}(?:\s*[/|-]\s*[A-Z0-9@$]+){1,4}/i);
+  if (!match) return null;
+  return match[0].replace(/\s+/g, '').toUpperCase();
 }
 
 /**

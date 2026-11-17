@@ -4,7 +4,7 @@ SomaLabel is a mobile-first web app that photographs a medicine label and explai
 
 ## Model
 
-Core AI work is done by the open-weight Gemma 4 26B A4B IT model (`gemma-4-26b-a4b-it`) via the Gemini API. Gemma is licensed under Apache 2.0. The scanner uses this single model. No closed models are used; if the Gemma call fails after its retry, the scanner returns an API error.
+A label is read in two steps. Tesseract.js turns the photo into text on the device, and that text is sent to Groq (`openai/gpt-oss-120b`, an open-weight model) which structures it into JSON and writes the plain-language explanation. Gemma 4 (`gemma-4-26b-a4b-it`, Apache 2.0) via the Gemini API is the fallback when Groq fails, and it is the only path that can look at the photo when OCR finds no usable text. No closed models are used.
 
 ## Dependencies and licenses
 
@@ -88,30 +88,34 @@ Copy `.env.example` to `.env`. Every variable from `.env.example`:
 
 | Variable        | Description                                                                               | Example                                     |
 | :-------------- | :---------------------------------------------------------------------------------------- | :------------------------------------------ |
-| GEMINI_API_KEY  | Required. API key for calling Gemma 4 models via the Gemini API. Read only on the server. | YOUR_GEMINI_API_KEY                         |
-| MODEL_ID        | Primary open-weight model id.                                                             | gemma-4-26b-a4b-it                          |
+| GROQ_API_KEY    | Required for the primary label reader. Read only on the server.                           | YOUR_GROQ_API_KEY                           |
+| GROQ_MODEL      | Groq model id.                                                                            | openai/gpt-oss-120b                         |
+| GROQ_API_URL    | Groq chat-completions endpoint.                                                           | https://api.groq.com/openai/v1/chat/completions |
+| GEMINI_API_KEY  | Fallback label reader and the vision path when OCR finds no text. Read only on the server. | YOUR_GEMINI_API_KEY                         |
+| MODEL_ID        | Gemma fallback / vision model id.                                                         | gemma-4-26b-a4b-it                          |
 | SUNBIRD_API_KEY | Optional. Sunbird AI API key for Luganda translation. Read only on the server.            | (empty)                                     |
 | SUNBIRD_API_URL | Optional. Sunbird AI translation endpoint.                                                | https://api.sunbird.ai/tasks/translate |
 | PORT            | Server port.                                                                              | 3000                                        |
 
 `.env` is ignored by git and must never be committed.
 
-## Where Gemma is used
+## Where the models are used
 
-Gemma 4 (`gemma-4-26b-a4b-it`, Apache 2.0) does all label understanding: structuring the label into JSON and writing the plain-language explanation in `src/lib/extraction.ts`, plus the Luganda fallback when Sunbird is not configured. Tesseract.js only converts the photo into raw text, and the expiry and register checks are plain code, not AI.
+Groq (`openai/gpt-oss-120b`) does the label understanding: it turns the OCR text into JSON and writes the plain-language explanation in `src/lib/groq.ts`. Gemma 4 is the fallback in `src/lib/extraction.ts` and handles the photo when OCR finds no usable text. Tesseract.js converts the photo into raw text on the device, and the expiry and register checks are plain code, not AI.
 
 ## How it works
 
-1. OCR reads the printed text from the label photo on the device, then Gemma structures that text into JSON.
-2. Code checks the expiry date against today and assigns an expiry badge.
-3. A lookup checks the demo register in `data/nda_seed.json` for the registration number.
-4. Sunbird translates to Luganda through `POST /tasks/translate` when configured, reading `output.translated_text`; otherwise the Gemma model provides a plain Luganda translation marked as machine translation.
+1. The photo is resized to at most 1024px, and Tesseract.js reads the printed text on the device. The OCR worker starts when the app opens, so the first scan does not wait for the language data. If the first read is poor, a second pass runs on an upscaled, contrast-stretched copy.
+2. Usable text is sent to Groq; Gemma via the Gemini API is the fallback. The photo is only uploaded when OCR produced nothing usable, because the primary reader is text-only.
+3. Code checks the expiry date against today and assigns an expiry badge.
+4. A lookup checks the demo register in `data/nda_seed.json` for the registration number.
+5. Sunbird translates to Luganda through `POST /tasks/translate` when configured, reading `output.translated_text`; otherwise the Gemma model provides a plain Luganda translation marked as machine translation.
 
-Uploads are resized on the client to at most 1024px on the long side as JPEG at quality 0.8. The JSON body limit is 8mb. The text path allows one retry on the same model for 429, 500 or 503 after 2 seconds; the image fallback makes a single attempt with no retry. Error responses carry the error message only, never a stack trace. The whole `/api/extract` handler has a 50-second deadline, each Gemma call has a 45-second timeout, and the client aborts at 55 seconds. `GET /api/health/model` sends a text-only "Reply with OK" to the configured model for health checks.
+Uploads are resized on the client to at most 1024px on the long side as JPEG at quality 0.8. The JSON body limit is 8mb. Groq calls have a 20-second timeout and one retry on 429/5xx; Gemma calls keep their existing retry rules. Error responses carry the error message only, never a stack trace. The whole `/api/extract` handler has a 50-second deadline. `GET /api/health/model` checks the configured primary provider.
 
 ## Safety
 
-SomaLabel explains only what is printed on the label and gives no dosing advice beyond the printed directions. It stores no photos; images are processed in memory only. Every result always shows the pharmacist line: "This explains what is printed on the label. Confirm with a pharmacist or health worker before use."
+SomaLabel explains only what is printed on the label and gives no dosing advice beyond the printed directions. It stores no photos; images are processed in memory only, and the photo is only uploaded when OCR cannot read the label. The label text is sent to the configured model provider (Groq, with Gemma as fallback) to be structured and explained. Every result always shows the pharmacist line: "This explains what is printed on the label. Confirm with a pharmacist or health worker before use."
 
 ## Limitations
 

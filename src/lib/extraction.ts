@@ -1,7 +1,21 @@
 import { GoogleGenAI } from '@google/genai';
 import { MODEL_ID } from './config.ts';
-import { GEMINI_API_KEY } from './server-env.ts';
+import { GEMINI_API_KEY, GROQ_API_KEY } from './server-env.ts';
 import { ExtractedLabel } from './types.ts';
+import {
+  extractJsonString,
+  validateExtractedLabel,
+  hasUsableLabelText,
+  MIN_TEXT_LENGTH,
+  MAX_LABEL_TEXT_LENGTH,
+  UNREADABLE_NOTICE,
+} from './label-schema.ts';
+import { extractWithGroq } from './groq.ts';
+import { recoverRegistrationNumber } from './registration.ts';
+
+// Re-exported so existing callers and tests keep importing from this module.
+export { extractJsonString, validateExtractedLabel, hasUsableLabelText };
+export { MIN_TEXT_LENGTH, MAX_LABEL_TEXT_LENGTH, UNREADABLE_NOTICE };
 
 const EXTRACTION_INSTRUCTIONS = `You are SomaLabel's medicine label extraction engine.
 Analyze the attached medicine package or label image and output factual information matching ONLY this exact JSON schema:
@@ -32,95 +46,6 @@ RULES:
 5. If the photo is too blurry, dark, cut off, or is not a medicine label, set "readable": false and explain in plain_explanation_en that the label could not be read clearly.
 6. Return ONLY the raw JSON object. Do not include markdown code fences or conversational text.`;
 
-/**
- * Strips code fences and surrounding text before JSON parsing.
- */
-export function extractJsonString(rawText: string): string {
-  if (!rawText || typeof rawText !== 'string') return '';
-  let text = rawText.trim();
-
-  // Find first { and last }
-  const firstBrace = text.indexOf('{');
-  const lastBrace = text.lastIndexOf('}');
-
-  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    text = text.substring(firstBrace, lastBrace + 1);
-  } else {
-    // Strip markdown code fences if no braces found
-    text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-  }
-
-  return text.trim();
-}
-
-/**
- * Validates that an object conforms to the required ExtractedLabel shape.
- */
-export function validateExtractedLabel(obj: any): ExtractedLabel | null {
-  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
-
-  if (typeof obj.readable !== 'boolean') return null;
-
-  if (!obj.readable) {
-    return {
-      readable: false,
-      product_name: typeof obj.product_name === 'string' ? obj.product_name : null,
-      active_ingredients: Array.isArray(obj.active_ingredients) ? obj.active_ingredients : [],
-      dosage_form: typeof obj.dosage_form === 'string' ? obj.dosage_form : null,
-      manufacturer: typeof obj.manufacturer === 'string' ? obj.manufacturer : null,
-      batch_number: typeof obj.batch_number === 'string' ? obj.batch_number : null,
-      manufacture_date_raw: typeof obj.manufacture_date_raw === 'string' ? obj.manufacture_date_raw : null,
-      expiry_date_raw: typeof obj.expiry_date_raw === 'string' ? obj.expiry_date_raw : null,
-      registration_number: typeof obj.registration_number === 'string' ? obj.registration_number : null,
-      printed_warnings: Array.isArray(obj.printed_warnings) ? obj.printed_warnings.map(String) : [],
-      printed_directions: typeof obj.printed_directions === 'string' ? obj.printed_directions : null,
-      label_language: typeof obj.label_language === 'string' ? obj.label_language : null,
-      plain_explanation_en: typeof obj.plain_explanation_en === 'string'
-        ? obj.plain_explanation_en
-        : "We couldn't read this label clearly. Try again in good light, with the label flat and close up.",
-    };
-  }
-
-  const ingredients: Array<{ name: string; strength: string | null }> = [];
-  if (Array.isArray(obj.active_ingredients)) {
-    for (const item of obj.active_ingredients) {
-      if (item && typeof item === 'object' && typeof item.name === 'string') {
-        ingredients.push({
-          name: item.name,
-          strength: typeof item.strength === 'string' ? item.strength : null,
-        });
-      }
-    }
-  }
-
-  const warnings: string[] = [];
-  if (Array.isArray(obj.printed_warnings)) {
-    for (const w of obj.printed_warnings) {
-      if (typeof w === 'string' && w.trim()) {
-        warnings.push(w.trim());
-      }
-    }
-  }
-
-  return {
-    readable: true,
-    product_name: typeof obj.product_name === 'string' ? obj.product_name : null,
-    active_ingredients: ingredients,
-    dosage_form: typeof obj.dosage_form === 'string' ? obj.dosage_form : null,
-    manufacturer: typeof obj.manufacturer === 'string' ? obj.manufacturer : null,
-    batch_number: typeof obj.batch_number === 'string' ? obj.batch_number : null,
-    manufacture_date_raw: typeof obj.manufacture_date_raw === 'string' ? obj.manufacture_date_raw : null,
-    expiry_date_raw: typeof obj.expiry_date_raw === 'string' ? obj.expiry_date_raw : null,
-    registration_number: typeof obj.registration_number === 'string' ? obj.registration_number : null,
-    printed_warnings: warnings,
-    printed_directions: typeof obj.printed_directions === 'string' ? obj.printed_directions : null,
-    label_language: typeof obj.label_language === 'string' ? obj.label_language : null,
-    plain_explanation_en: typeof obj.plain_explanation_en === 'string' && obj.plain_explanation_en.trim()
-      ? obj.plain_explanation_en.trim()
-      : 'This is a medicine package. Confirm usage with a healthcare professional.',
-  };
-}
-
 export type ExtractionStatus = 'success' | 'unreadable' | 'api_error' | 'rejection' | 'parse_error';
 
 export interface ExtractionResult {
@@ -138,11 +63,6 @@ export const RETRY_DELAY_MS = 2000;
 export const REQUEST_TIMEOUT_MS = 15000;
 export const TEXT_REQUEST_TIMEOUT_MS = 45000;
 export const IMAGE_REQUEST_TIMEOUT_MS = 45000;
-export const MAX_LABEL_TEXT_LENGTH = 5000;
-export const MIN_TEXT_LENGTH = 15;
-
-export const UNREADABLE_NOTICE =
-  "We couldn't read this label clearly. Try again in good light, with the label flat and close up.";
 
 /**
  * Returns [primary, alternate] using MODEL_ID as primary.
@@ -551,8 +471,70 @@ export async function extractFromImage(
 }
 
 /**
- * Routes a scan: text-only Gemma path when OCR produced usable text,
- * single image attempt otherwise.
+ * Reads a label from OCR text.
+ *
+ * Order: Groq (fast, reliable, text-only) first, then Gemma via the Gemini
+ * API as a fallback, because the Gemma endpoint intermittently returns
+ * 503 "high demand" for minutes at a time. The image never goes to Groq:
+ * the OCR text is the payload, so no vision tokens are spent.
+ */
+export async function extractFromOcrText(labelText: string): Promise<ExtractionResult> {
+  const text = (labelText || '').trim();
+  const failures: string[] = [];
+  let lastRawText = '';
+
+  if (GROQ_API_KEY) {
+    const groq = await extractWithGroq(text);
+    lastRawText = groq.rawModelText || '';
+    if (groq.status === 'success' || groq.status === 'unreadable') return recoverMissedFields(groq, text);
+    if (groq.status === 'rejection') return groq; // not a medicine label / unusable text
+    failures.push(`Groq: ${groq.rawApiError || 'request failed'}`);
+    console.warn(`[extractFromOcrText] Groq failed (${groq.rawApiError}), trying Gemma fallback`);
+  } else {
+    failures.push('Groq: GROQ_API_KEY is not configured');
+  }
+
+  const gemma = await extractFromText(text);
+  lastRawText = gemma.rawModelText || lastRawText;
+  if (gemma.status === 'success' || gemma.status === 'unreadable' || gemma.status === 'rejection') {
+    return recoverMissedFields(gemma, text);
+  }
+  failures.push(`Gemma: ${gemma.rawApiError || 'request failed'}`);
+
+  return {
+    status: 'api_error',
+    modelUsed: gemma.modelUsed,
+    rawApiError: failures.join(' | ').slice(0, 500),
+    rawModelText: lastRawText || '(No model text generated)',
+  };
+}
+
+/**
+ * The model occasionally omits a value that is plainly printed, which flips a
+ * badge between scans of the same label. Registration codes are the one field
+ * with a fixed, unambiguous printed shape, so it is recovered from the OCR
+ * text when the model leaves it null. Nothing is invented: the code must
+ * appear in the text that was actually read.
+ */
+export function recoverMissedFields(
+  result: ExtractionResult,
+  labelText: string
+): ExtractionResult {
+  if (result.status !== 'success' || !result.data) return result;
+  if (result.data.registration_number) return result;
+
+  const recovered = recoverRegistrationNumber(labelText);
+  if (!recovered) return result;
+
+  return {
+    ...result,
+    data: { ...result.data, registration_number: recovered },
+  };
+}
+
+/**
+ * Routes a scan: OCR text goes to Groq (Gemma fallback) when it is usable,
+ * otherwise the image goes to the Gemma vision path.
  */
 export async function extractLabel(input: {
   labelText: string;
@@ -560,8 +542,17 @@ export async function extractLabel(input: {
   mimeType?: string;
 }): Promise<ExtractionResult> {
   const text = (input.labelText || '').trim();
-  if (text.length >= MIN_TEXT_LENGTH) {
-    return extractFromText(text);
+  if (hasUsableLabelText(text)) {
+    return extractFromOcrText(text);
+  }
+  if (!input.imageBase64) {
+    return {
+      status: 'unreadable',
+      data: validateExtractedLabel({ readable: false, plain_explanation_en: UNREADABLE_NOTICE })!,
+      modelUsed: MODEL_ID,
+      rawApiError: 'No usable OCR text and no image supplied.',
+      rawModelText: '',
+    };
   }
   return extractFromImage(input.imageBase64, input.mimeType || 'image/jpeg');
 }
